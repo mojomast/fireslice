@@ -1,0 +1,87 @@
+package fireslice
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"github.com/mojomast/fireslice/internal/db"
+	"github.com/mojomast/fireslice/internal/vm"
+)
+
+func TestServiceCreateVM(t *testing.T) {
+	now := db.SQLiteTime{Time: time.Now()}
+	users := &serviceStubUsers{
+		keys: map[int64][]*db.SSHKey{1: {{ID: 1, UserID: 1, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILi2Zf8Bq4J0oQ4Sx7z3qY8pM2w0N1vGv4uO0v9C7A2X test@example", Fingerprint: "SHA256:x", CreatedAt: now}}},
+	}
+	vms := &serviceStubVMs{
+		created: &db.VM{ID: 10, UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, Status: "creating", CreatedAt: now, UpdatedAt: now},
+		get:     map[int64]*db.VM{},
+	}
+	runtime := &serviceStubRuntime{}
+	service := &Service{Users: users, VMs: vms, VMRun: runtime}
+
+	vmRecord, err := service.CreateVM(context.Background(), CreateVMInput{UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vmRecord.ID != 10 {
+		t.Fatalf("vm id = %d, want 10", vmRecord.ID)
+	}
+	if runtime.calls != 1 {
+		t.Fatalf("runtime calls = %d, want 1", runtime.calls)
+	}
+}
+
+type serviceStubUsers struct {
+	keys map[int64][]*db.SSHKey
+}
+
+func (s *serviceStubUsers) CreateUser(context.Context, string, string) (*db.User, error) {
+	return nil, nil
+}
+func (s *serviceStubUsers) GetUser(context.Context, int64) (*db.User, error) { return nil, nil }
+func (s *serviceStubUsers) ListUsers(context.Context) ([]*db.User, error)    { return nil, nil }
+func (s *serviceStubUsers) DeleteUser(context.Context, int64) error          { return nil }
+func (s *serviceStubUsers) AddSSHKey(context.Context, int64, string, string) (*db.SSHKey, error) {
+	return nil, nil
+}
+func (s *serviceStubUsers) DeleteSSHKey(context.Context, int64, int64) error { return nil }
+func (s *serviceStubUsers) ListSSHKeys(_ context.Context, userID int64) ([]*db.SSHKey, error) {
+	return s.keys[userID], nil
+}
+
+type serviceStubVMs struct {
+	created *db.VM
+	get     map[int64]*db.VM
+}
+
+func (s *serviceStubVMs) CreateVMRecord(_ context.Context, input CreateVMInput) (*db.VM, error) {
+	copy := *s.created
+	copy.ExposeSubdomain = input.ExposeSubdomain
+	copy.ExposedPort = input.ExposedPort
+	if input.Subdomain != "" {
+		copy.Subdomain = sql.NullString{String: input.Subdomain, Valid: true}
+	}
+	copy.Status = "running"
+	s.get[copy.ID] = &copy
+	return &copy, nil
+}
+func (s *serviceStubVMs) GetVM(_ context.Context, id int64) (*db.VM, error)   { return s.get[id], nil }
+func (s *serviceStubVMs) ListVMs(context.Context) ([]*db.VM, error)           { return nil, nil }
+func (s *serviceStubVMs) UpdateVMStatus(context.Context, int64, string) error { return nil }
+func (s *serviceStubVMs) UpdateVMExposure(context.Context, int64, bool, string, int) error {
+	return nil
+}
+func (s *serviceStubVMs) DeleteVM(context.Context, int64) error { return nil }
+
+type serviceStubRuntime struct{ calls int }
+
+func (s *serviceStubRuntime) CreateAndStartWithOptions(context.Context, vm.CreateOptions) error {
+	s.calls++
+	return nil
+}
+func (s *serviceStubRuntime) Start(context.Context, int64) error   { return nil }
+func (s *serviceStubRuntime) Stop(context.Context, int64) error    { return nil }
+func (s *serviceStubRuntime) Destroy(context.Context, int64) error { return nil }

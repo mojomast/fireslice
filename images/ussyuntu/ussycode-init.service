@@ -1,0 +1,14 @@
+[Unit]
+Description=ussycode VM initialization
+After=network.target ssh.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/init-ussycode.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice user</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a href="/">VMs</a>
+    <a href="/users">Users</a>
+    <a href="/vms/new">New VM</a>
+    <a href="/settings">Settings</a>
+  </nav>
+  <div class="card">
+    <h1>{{index .User "handle"}}</h1>
+    <p>{{index .User "email"}}</p>
+  </div>
+  <div class="card">
+    <h2>SSH keys</h2>
+    <form method="post" action="/users/{{index .User "id"}}/keys">
+      <input type="text" name="label" placeholder="label" required>
+      <input type="text" name="public_key" placeholder="ssh-ed25519 ..." required>
+      <button type="submit">Add key</button>
+    </form>
+    <table>
+      <thead><tr><th>Label</th><th>Fingerprint</th><th>Created</th></tr></thead>
+      <tbody>
+        {{range index .User "keys"}}
+        <tr><td>{{index . "label"}}</td><td>{{index . "fingerprint"}}</td><td>{{index . "created_at"}}</td></tr>
+        {{else}}
+        <tr><td colspan="3" class="muted">No SSH keys.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>VMs</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Status</th><th>Subdomain</th></tr></thead>
+      <tbody>
+        {{range .VMs}}
+        <tr><td>{{index . "name"}}</td><td>{{index . "status"}}</td><td>{{index . "subdomain"}}</td></tr>
+        {{else}}
+        <tr><td colspan="3" class="muted">No VMs.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</main>
+</body>
+</html>

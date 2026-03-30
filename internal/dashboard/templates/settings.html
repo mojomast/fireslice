@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice settings</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a href="/">VMs</a>
+    <a href="/users">Users</a>
+    <a href="/vms/new">New VM</a>
+    <a href="/settings">Settings</a>
+  </nav>
+  <h1>Settings</h1>
+  <table>
+    <thead><tr><th>Key</th><th>Value</th></tr></thead>
+    <tbody>
+      {{range $k, $v := .Config}}
+      <tr><td>{{$k}}</td><td>{{$v}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

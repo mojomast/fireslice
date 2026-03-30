@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice login</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>fireslice login</h1>
+    {{if .Error}}<p>{{.Error}}</p>{{end}}
+    <form method="post" action="/login">
+      <input type="text" name="username" placeholder="username" required>
+      <input type="password" name="password" placeholder="password" required>
+      <button type="submit">Login</button>
+    </form>
+  </div>
+</main>
+</body>
+</html>

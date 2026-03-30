@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>new vm</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a href="/">VMs</a>
+    <a href="/users">Users</a>
+    <a href="/vms/new">New VM</a>
+    <a href="/settings">Settings</a>
+  </nav>
+  <h1>Create VM</h1>
+  <form method="post" action="/vms">
+    <select name="user_id" required>
+      {{range .Users}}<option value="{{index . "id"}}">{{index . "handle"}}</option>{{end}}
+    </select>
+    <input type="text" name="name" placeholder="name" required>
+    <input type="text" name="image" value="ussyuntu" required>
+    <input type="text" name="vcpu" value="2" required>
+    <input type="text" name="memory_mb" value="1024" required>
+    <input type="text" name="disk_gb" value="20" required>
+    <input type="text" name="subdomain" placeholder="subdomain">
+    <input type="text" name="exposed_port" value="8080">
+    <label><input type="checkbox" name="expose_subdomain"> Expose now</label>
+    <button type="submit">Create VM</button>
+  </form>
+</main>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a href="/">VMs</a>
+    <a href="/users">Users</a>
+    <a href="/vms/new">New VM</a>
+    <a href="/settings">Settings</a>
+    <form method="post" action="/logout"><button type="submit">Logout</button></form>
+  </nav>
+  <h1>VMs</h1>
+  {{if .Error}}<p>{{.Error}}</p>{{end}}
+  <table>
+    <thead><tr><th>Name</th><th>Owner</th><th>State</th><th>IP</th><th>Subdomain</th><th>Port</th><th>Created</th><th>Actions</th></tr></thead>
+    <tbody>
+      {{range .VMs}}
+      <tr>
+        <td>{{index . "name"}}</td>
+        <td>{{index . "user_handle"}}</td>
+        <td>{{index . "status"}}</td>
+        <td>{{index . "ip_address"}}</td>
+        <td>{{index . "subdomain"}}</td>
+        <td>{{index . "exposed_port"}}</td>
+        <td>{{index . "created_at"}}</td>
+        <td>
+          <div class="row-actions">
+            <form method="post" action="/vms/{{index . "id"}}/start"><button type="submit">Start</button></form>
+            <form method="post" action="/vms/{{index . "id"}}/stop"><button type="submit">Stop</button></form>
+            <form method="post" action="/vms/{{index . "id"}}/delete"><button type="submit">Destroy</button></form>
+            <form method="post" action="/vms/{{index . "id"}}/expose">
+              <input type="text" name="subdomain" placeholder="subdomain" value="{{index . "subdomain"}}">
+              <input type="text" name="exposed_port" value="{{index . "exposed_port"}}">
+              <button type="submit">Expose</button>
+            </form>
+            <form method="post" action="/vms/{{index . "id"}}/hide"><button type="submit">Hide</button></form>
+          </div>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="8" class="muted">No VMs yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

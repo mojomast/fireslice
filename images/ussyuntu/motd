@@ -1,0 +1,15 @@
+
+    ╔══════════════════════════════════════════════════════╗
+    ║                                                      ║
+    ║   welcome to your ussycode dev environment           ║
+    ║                                                      ║
+    ║   ussyverse infrastructure · powered by firecracker  ║
+    ║                                                      ║
+    ╚══════════════════════════════════════════════════════╝
+
+    pi is starting automatically as your AI assistant.
+    exit pi anytime for a normal shell. run `pi` to restart.
+    opencode is also available: run `opencode` manually.
+
+    your projects are in ~/projects (persisted to /data)
+

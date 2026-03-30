@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice users</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a href="/">VMs</a>
+    <a href="/users">Users</a>
+    <a href="/vms/new">New VM</a>
+    <a href="/settings">Settings</a>
+  </nav>
+  <h1>Users</h1>
+  <form method="post" action="/users">
+    <input type="text" name="handle" placeholder="handle" required>
+    <input type="text" name="email" placeholder="email">
+    <button type="submit">Create user</button>
+  </form>
+  <table>
+    <thead><tr><th>Handle</th><th>Email</th><th>Keys</th><th>VMs</th><th>Created</th><th>Actions</th></tr></thead>
+    <tbody>
+      {{range .Users}}
+      <tr>
+        <td><a href="/users/{{index . "id"}}">{{index . "handle"}}</a></td>
+        <td>{{index . "email"}}</td>
+        <td>{{index . "key_count"}}</td>
+        <td>{{index . "vm_count"}}</td>
+        <td>{{index . "created_at"}}</td>
+        <td><form method="post" action="/users/{{index . "id"}}/delete"><button type="submit">Delete</button></form></td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="muted">No users yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
