@@ -1,0 +1,14 @@
+{
+    admin 127.0.0.1:2019
+}
+
+slice.ussyco.de {
+    reverse_proxy 127.0.0.1:9090
+}
+
+*.slice.ussyco.de {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    respond "VM route not configured" 404
+}

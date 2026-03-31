@@ -1,0 +1,13 @@
+{{define "nav"}}
+<nav>
+  <a href="/">VMs</a>
+  {{if .IsAdmin}}
+  <a href="/users">Users</a>
+  {{else}}
+  <a href="/users/{{.Principal.UserID}}">Account</a>
+  {{end}}
+  <a href="/vms/new">New VM</a>
+  <a href="/settings">Settings</a>
+  <form method="post" action="/logout"><button type="submit">Logout</button></form>
+</nav>
+{{end}}

@@ -8,12 +8,7 @@
 </head>
 <body>
 <main>
-  <nav>
-    <a href="/">VMs</a>
-    <a href="/users">Users</a>
-    <a href="/vms/new">New VM</a>
-    <a href="/settings">Settings</a>
-  </nav>
+  {{template "nav" .}}
   <h1>Create VM</h1>
   <form method="post" action="/vms">
     <select name="user_id" required>

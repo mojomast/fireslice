@@ -38,12 +38,16 @@ type serviceStubUsers struct {
 	keys map[int64][]*db.SSHKey
 }
 
-func (s *serviceStubUsers) CreateUser(context.Context, string, string) (*db.User, error) {
+func (s *serviceStubUsers) CreateUser(context.Context, string, string, string, string) (*db.User, error) {
 	return nil, nil
 }
 func (s *serviceStubUsers) GetUser(context.Context, int64) (*db.User, error) { return nil, nil }
-func (s *serviceStubUsers) ListUsers(context.Context) ([]*db.User, error)    { return nil, nil }
-func (s *serviceStubUsers) DeleteUser(context.Context, int64) error          { return nil }
+func (s *serviceStubUsers) GetUserByHandle(context.Context, string) (*db.User, error) {
+	return nil, nil
+}
+func (s *serviceStubUsers) ListUsers(context.Context) ([]*db.User, error)       { return nil, nil }
+func (s *serviceStubUsers) DeleteUser(context.Context, int64) error             { return nil }
+func (s *serviceStubUsers) UpdatePassword(context.Context, int64, string) error { return nil }
 func (s *serviceStubUsers) AddSSHKey(context.Context, int64, string, string) (*db.SSHKey, error) {
 	return nil, nil
 }
@@ -68,9 +72,10 @@ func (s *serviceStubVMs) CreateVMRecord(_ context.Context, input CreateVMInput) 
 	s.get[copy.ID] = &copy
 	return &copy, nil
 }
-func (s *serviceStubVMs) GetVM(_ context.Context, id int64) (*db.VM, error)   { return s.get[id], nil }
-func (s *serviceStubVMs) ListVMs(context.Context) ([]*db.VM, error)           { return nil, nil }
-func (s *serviceStubVMs) UpdateVMStatus(context.Context, int64, string) error { return nil }
+func (s *serviceStubVMs) GetVM(_ context.Context, id int64) (*db.VM, error)      { return s.get[id], nil }
+func (s *serviceStubVMs) ListVMs(context.Context) ([]*db.VM, error)              { return nil, nil }
+func (s *serviceStubVMs) ListVMsByUser(context.Context, int64) ([]*db.VM, error) { return nil, nil }
+func (s *serviceStubVMs) UpdateVMStatus(context.Context, int64, string) error    { return nil }
 func (s *serviceStubVMs) UpdateVMExposure(context.Context, int64, bool, string, int) error {
 	return nil
 }

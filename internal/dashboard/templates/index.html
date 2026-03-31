@@ -8,13 +8,7 @@
 </head>
 <body>
 <main>
-  <nav>
-    <a href="/">VMs</a>
-    <a href="/users">Users</a>
-    <a href="/vms/new">New VM</a>
-    <a href="/settings">Settings</a>
-    <form method="post" action="/logout"><button type="submit">Logout</button></form>
-  </nav>
+  {{template "nav" .}}
   <h1>VMs</h1>
   {{if .Error}}<p>{{.Error}}</p>{{end}}
   <table>

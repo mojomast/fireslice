@@ -23,7 +23,7 @@ func (m *Manager) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), contextKey{}, session)
-		ctx = httpapi.WithPrincipal(ctx, httpapi.Principal{Subject: session.Username, Role: "admin"})
+		ctx = httpapi.WithPrincipal(ctx, httpapi.Principal{Subject: session.Username, UserID: session.UserID, Role: session.Role})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -42,6 +42,7 @@ func (m *Manager) RequirePageAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), contextKey{}, session)
+		ctx = httpapi.WithPrincipal(ctx, httpapi.Principal{Subject: session.Username, UserID: session.UserID, Role: session.Role})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

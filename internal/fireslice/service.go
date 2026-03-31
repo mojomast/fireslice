@@ -276,12 +276,16 @@ func (a *VMRuntimeAdapter) userKeys(ctx context.Context, userID int64) ([]string
 
 type DBUserStore struct{ DB *db.DB }
 
-func (s *DBUserStore) CreateUser(ctx context.Context, handle, email string) (*db.User, error) {
-	return s.DB.CreateFiresliceUser(ctx, handle, email)
+func (s *DBUserStore) CreateUser(ctx context.Context, handle, email, password, role string) (*db.User, error) {
+	return s.DB.CreateFiresliceUser(ctx, handle, email, password, role)
 }
 
 func (s *DBUserStore) GetUser(ctx context.Context, id int64) (*db.User, error) {
 	return s.DB.GetFiresliceUser(ctx, id)
+}
+
+func (s *DBUserStore) GetUserByHandle(ctx context.Context, handle string) (*db.User, error) {
+	return s.DB.GetFiresliceUserByHandle(ctx, handle)
 }
 
 func (s *DBUserStore) ListUsers(ctx context.Context) ([]*db.User, error) {
@@ -290,6 +294,10 @@ func (s *DBUserStore) ListUsers(ctx context.Context) ([]*db.User, error) {
 
 func (s *DBUserStore) DeleteUser(ctx context.Context, id int64) error {
 	return s.DB.DeleteFiresliceUser(ctx, id)
+}
+
+func (s *DBUserStore) UpdatePassword(ctx context.Context, userID int64, password string) error {
+	return s.DB.UpdateFiresliceUserPassword(ctx, userID, password)
 }
 
 func (s *DBUserStore) AddSSHKey(ctx context.Context, userID int64, publicKey, label string) (*db.SSHKey, error) {
@@ -326,6 +334,10 @@ func (s *DBVMStore) GetVM(ctx context.Context, id int64) (*db.VM, error) {
 
 func (s *DBVMStore) ListVMs(ctx context.Context) ([]*db.VM, error) {
 	return s.DB.ListFiresliceVMs(ctx)
+}
+
+func (s *DBVMStore) ListVMsByUser(ctx context.Context, userID int64) ([]*db.VM, error) {
+	return s.DB.VMsByUser(ctx, userID)
 }
 
 func (s *DBVMStore) UpdateVMStatus(ctx context.Context, id int64, status string) error {

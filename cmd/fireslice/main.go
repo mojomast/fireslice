@@ -84,8 +84,8 @@ func main() {
 	service.Audit = auditStore
 
 	var authMgr *sessionauth.Manager
-	if cfg.AdminPassBcrypt != "" {
-		authMgr, err = sessionauth.New(cfg.AdminUsername, cfg.AdminPassBcrypt, "fireslice_session", 24*time.Hour, false)
+	if cfg.AdminPassBcrypt != "" || userStore != nil {
+		authMgr, err = sessionauth.New(&sessionauth.DBLookup{DB: database}, cfg.AdminUsername, cfg.AdminPassBcrypt, "fireslice_session", 24*time.Hour, false)
 		if err != nil {
 			log.Fatalf("init session auth: %v", err)
 		}

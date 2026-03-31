@@ -1,302 +1,174 @@
-# ussycode API Reference
+# fireslice API Reference
 
-The ussycode HTTPS API allows programmatic access to all platform features. It mirrors the SSH command interface but over HTTP.
+The current `fireslice` API is a JSON control-plane API served by the main application.
 
-## Base URL
+## Base Path
 
+```text
+/api/admin
 ```
-https://ussyco.de
-```
 
-For self-hosted instances, replace with your domain.
+When publicly exposed, the intended host is:
+
+```text
+https://slice.ussyco.de/api/admin
+```
 
 ## Authentication
 
-All API requests require a Bearer token in the `Authorization` header:
+The API relies on the same authenticated session context used by the dashboard middleware.
 
-```
-Authorization: Bearer <token>
-```
+Current principal fields are:
 
-### Token Formats
+- `subject`
+- `user_id`
+- `role`
 
-ussycode supports two token formats:
+## Authorization Model
 
-#### Stateless Tokens (`usy0.`)
+### Admin-only
 
-Format: `usy0.<base64url_permissions>.<base64url_ssh_signature>`
+- `GET /users`
+- `POST /users`
+- `DELETE /users/{id}`
 
-These tokens are:
-- Self-contained (no database lookup needed)
-- Signed with your SSH private key
-- Time-limited (contain expiry timestamp)
-- Optionally scoped to specific commands
+### Admin or self
 
-**Permissions payload (JSON):**
-```json
-{
-  "exp": 1735689600,
-  "nbf": 1735603200,
-  "cmds": ["ls", "new"],
-  "ctx": ""
-}
-```
+- `GET /users/{id}`
+- `POST /users/{id}/keys`
+- `DELETE /users/{id}/keys/{keyID}`
+- `POST /users/{id}/password`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `exp` | int64 | Expiry (Unix timestamp) |
-| `nbf` | int64 | Not-before (Unix timestamp) |
-| `cmds` | string[] | Allowed commands (empty = all) |
-| `ctx` | string | Optional context string |
+### Admin or VM owner
 
-#### Database Tokens (`usy1.`)
-
-Format: `usy1.<opaque_token_id>`
-
-These tokens are:
-- Stored in the database
-- Revocable
-- Created via the `admin` command
-
-### Generating Tokens
-
-Via the SSH shell:
-
-```
-> admin token create --ttl=24h --cmds=ls,new
-usy0.eyJleHAiOjE3MzU2ODk2MDB9.c2lnbmF0dXJl...
-```
-
-Via the auth package (Go):
-
-```go
-import "github.com/mojomast/ussycode/internal/auth"
-
-token, err := auth.SignToken(signer, "myhandle", 24*time.Hour, []string{"ls", "new"})
-```
+- `GET /vms`
+  - admin receives all VMs
+  - non-admin receives only owned VMs
+- `POST /vms`
+  - admin may create for any `user_id`
+  - non-admin is forced to their own `user_id`
+- `GET /vms/{id}`
+- `POST /vms/{id}/start`
+- `POST /vms/{id}/stop`
+- `DELETE /vms/{id}`
+- `PATCH /vms/{id}/exposure`
 
 ## Endpoints
 
-### POST /exec
+### `GET /health`
 
-Execute an SSH command via HTTPS.
+Returns:
 
-**Request:**
+```json
+{"ok": true}
+```
+
+### `GET /users`
+
+Admin-only. Returns all users with VM and key counts.
+
+### `POST /users`
+
+Admin-only. Creates a DB-backed user.
+
+Request:
 
 ```json
 {
-  "command": "ls -l"
+  "handle": "bob",
+  "email": "bob@example.com",
+  "password": "secret123",
+  "role": "user"
 }
 ```
 
-**Response (200):**
+### `GET /users/{id}`
+
+Admin or self. Returns one user plus keys and VM count.
+
+### `POST /users/{id}/keys`
+
+Admin or self. Adds an SSH key.
+
+Request:
 
 ```json
 {
-  "output": "  NAME      STATUS   IMAGE     CPU  MEM   CREATED\n  myvm      running  ussyuntu  1    512M  2024-01-15\n",
-  "exit_code": 0
+  "public_key": "ssh-ed25519 AAAA... user@example",
+  "label": "laptop"
 }
 ```
 
-**Example:**
+### `DELETE /users/{id}/keys/{keyID}`
 
-```bash
-curl -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer usy0.eyJ..." \
-  -H "Content-Type: application/json" \
-  -d '{"command": "ls"}'
-```
+Admin or self. Deletes an SSH key.
 
-#### Creating a VM
+### `POST /users/{id}/password`
 
-```bash
-curl -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "new --name=apivm --image=ussyuntu"}'
-```
+Admin or self. Updates the user's password.
 
-#### Listing VMs (JSON output)
-
-```bash
-curl -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "ls --json"}'
-```
-
-#### Stopping a VM
-
-```bash
-curl -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "stop myvm"}'
-```
-
-### GET /health
-
-Health check endpoint. No authentication required.
-
-**Response (200):**
+Request:
 
 ```json
 {
-  "status": "ok",
-  "time": "2024-01-15T10:30:00Z"
+  "password": "new-secret"
 }
 ```
 
-**Example:**
+### `GET /vms`
 
-```bash
-curl https://ussyco.de/health
-```
+Admin gets all VMs. Non-admin gets only owned VMs.
 
-### GET /version
+### `POST /vms`
 
-Version information. No authentication required.
+Creates a VM record and, when runtime dependencies are available, attempts provisioning/start.
 
-**Response (200):**
+Request:
 
 ```json
 {
-  "version": "0.1.0",
-  "go": "go1.25.7",
-  "os": "linux",
-  "arch": "amd64"
+  "user_id": 2,
+  "name": "mybox",
+  "image": "ussyuntu",
+  "vcpu": 2,
+  "memory_mb": 1024,
+  "disk_gb": 20,
+  "expose_subdomain": false
 }
 ```
 
-## Rate Limiting
+### `GET /vms/{id}`
 
-The API applies per-fingerprint token bucket rate limiting:
+Admin or VM owner. Returns one VM.
 
-| Parameter | Default |
-|-----------|---------|
-| Rate | 60 requests/minute |
-| Burst | 10 requests |
+### `POST /vms/{id}/start`
 
-When rate limited, the API returns:
+Admin or VM owner. Starts a VM.
 
-**Response (429):**
+### `POST /vms/{id}/stop`
+
+Admin or VM owner. Stops a VM.
+
+### `DELETE /vms/{id}`
+
+Admin or VM owner. Destroys a VM.
+
+### `PATCH /vms/{id}/exposure`
+
+Admin or VM owner. Updates subdomain exposure.
+
+Request:
 
 ```json
 {
-  "error": "rate limit exceeded",
-  "code": 429
+  "expose_subdomain": true,
+  "subdomain": "mybox",
+  "exposed_port": 8080
 }
 ```
 
-The `Retry-After` header indicates seconds until the next request is allowed:
+## Important Limitations
 
-```
-Retry-After: 3
-```
-
-## Error Codes
-
-| HTTP Code | Meaning | Example |
-|-----------|---------|---------|
-| 200 | Success | Command executed successfully |
-| 400 | Bad Request | Empty command, malformed JSON |
-| 401 | Unauthorized | Missing/invalid/expired token |
-| 403 | Forbidden | Token doesn't permit this command |
-| 404 | Not Found | Endpoint doesn't exist |
-| 422 | Unprocessable Entity | Command failed (e.g., VM doesn't exist) |
-| 429 | Too Many Requests | Rate limit exceeded |
-| 504 | Gateway Timeout | Command timed out (30s limit) |
-
-### Error Response Format
-
-All errors return:
-
-```json
-{
-  "error": "human-readable error message",
-  "code": 401
-}
-```
-
-## Available Commands
-
-> **`--json` support:** Most list/query commands support `--json` for machine-readable output. Currently verified: `ls --json`, `ssh-key list --json`, `share list --json`.
-
-All SSH shell commands are available via `POST /exec`:
-
-| Command | Description |
-|---------|-------------|
-| `help` | Show help |
-| `whoami` | Show user info |
-| `ls` | List VMs |
-| `ls -l` | List VMs (detailed) |
-| `ls --json` | List VMs (JSON) |
-| `new` | Create VM |
-| `new --name=X --image=Y` | Create named VM with image |
-| `rm <name>` | Delete VM |
-| `start <name>` | Start VM |
-| `stop <name>` | Stop VM |
-| `restart <name>` | Restart VM |
-| `rename <old> <new>` | Rename VM |
-| `cp <name> [new]` | Clone VM |
-| `tag <name> <tag>` | Add tag |
-| `tag -d <name> <tag>` | Remove tag |
-| `share url <name>` | Get share URL |
-| `share collab <name> <user>` | Grant SSH access |
-| `share pub <name>` | Make public |
-| `share cname <name> <domain>` | Add custom domain |
-| `ssh-key list` | List SSH keys |
-| `ssh-key add <key>` | Add SSH key |
-
-## Examples
-
-### Full Workflow with curl
-
-```bash
-# Set your token
-export TOKEN="usy0.eyJ..."
-
-# Create a VM
-curl -s -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "new --name=webapp"}' | jq .
-
-# Check it's running
-curl -s -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "ls --json"}' | jq .
-
-# Get share URL
-curl -s -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "share url webapp"}' | jq .
-
-# Clean up
-curl -s -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "rm webapp"}' | jq .
-```
-
-### Using with jq
-
-```bash
-# Get just VM names
-curl -s -X POST https://ussyco.de/exec \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"command": "ls --json"}' | jq -r '.output | fromjson | .[].name'
-```
-
-### Health Check Script
-
-```bash
-#!/bin/bash
-status=$(curl -s https://ussyco.de/health | jq -r '.status')
-if [ "$status" != "ok" ]; then
-  echo "ussycode is down!"
-  exit 1
-fi
-```
+- The API path still uses `/api/admin` even though some endpoints are now self-service.
+- A successful control-plane API response does not prove public routing or guest service reachability.
+- VM exposure still depends on real wildcard DNS, wildcard TLS, a healthy Caddy admin API, and a guest process listening on the requested port.

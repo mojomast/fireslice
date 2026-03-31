@@ -55,12 +55,14 @@ func (t SQLiteTime) Value() (driver.Value, error) {
 
 // User represents a registered user identified by SSH key.
 type User struct {
-	ID         int64
-	Handle     string
-	Email      string // optional email address for the user
-	TrustLevel string
-	CreatedAt  SQLiteTime
-	UpdatedAt  SQLiteTime
+	ID             int64
+	Handle         string
+	Email          string // optional email address for the user
+	PasswordBcrypt string
+	Role           string
+	TrustLevel     string
+	CreatedAt      SQLiteTime
+	UpdatedAt      SQLiteTime
 }
 
 // SSHKey represents a user's SSH public key.

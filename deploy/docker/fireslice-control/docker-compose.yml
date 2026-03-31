@@ -1,0 +1,23 @@
+services:
+  fireslice:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/fireslice-control/Dockerfile
+    image: fireslice-control:local
+    container_name: fireslice-control
+    restart: unless-stopped
+    env_file:
+      - .env
+    network_mode: host
+    privileged: true
+    devices:
+      - /dev/kvm:/dev/kvm
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    volumes:
+      - /var/lib/fireslice:/var/lib/fireslice
+      - /usr/local/bin/firecracker:/usr/local/bin/firecracker:ro
+      - /boot/vmlinux-fireslice:/boot/vmlinux-fireslice:ro
+      - /var/run/docker.sock:/var/run/docker.sock

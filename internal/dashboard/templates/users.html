@@ -8,32 +8,34 @@
 </head>
 <body>
 <main>
-  <nav>
-    <a href="/">VMs</a>
-    <a href="/users">Users</a>
-    <a href="/vms/new">New VM</a>
-    <a href="/settings">Settings</a>
-  </nav>
+  {{template "nav" .}}
   <h1>Users</h1>
   <form method="post" action="/users">
     <input type="text" name="handle" placeholder="handle" required>
     <input type="text" name="email" placeholder="email">
+    <input type="password" name="password" placeholder="password" required>
+    <select name="role">
+      <option value="user">user</option>
+      <option value="admin">admin</option>
+    </select>
     <button type="submit">Create user</button>
   </form>
   <table>
-    <thead><tr><th>Handle</th><th>Email</th><th>Keys</th><th>VMs</th><th>Created</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Handle</th><th>Email</th><th>Role</th><th>Trust</th><th>Keys</th><th>VMs</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>
       {{range .Users}}
       <tr>
         <td><a href="/users/{{index . "id"}}">{{index . "handle"}}</a></td>
         <td>{{index . "email"}}</td>
+        <td>{{index . "role"}}</td>
+        <td>{{index . "trust_level"}}</td>
         <td>{{index . "key_count"}}</td>
         <td>{{index . "vm_count"}}</td>
         <td>{{index . "created_at"}}</td>
         <td><form method="post" action="/users/{{index . "id"}}/delete"><button type="submit">Delete</button></form></td>
       </tr>
       {{else}}
-      <tr><td colspan="6" class="muted">No users yet.</td></tr>
+      <tr><td colspan="8" class="muted">No users yet.</td></tr>
       {{end}}
     </tbody>
   </table>

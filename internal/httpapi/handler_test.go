@@ -69,7 +69,7 @@ func TestUserEndpoints(t *testing.T) {
 		listVMs: []*db.VM{{ID: 21, UserID: 1, Name: "alice-box", Status: "running", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}},
 	}
 	audit := &stubAudit{}
-	h := New(&fireslice.Service{Users: users, VMs: vms}, Options{AuditLogger: audit})
+	h := newAuthedHandler(&fireslice.Service{Users: users, VMs: vms}, audit, Principal{Subject: "admin", UserID: 99, Role: "admin"})
 	srv := h.HTTPHandler()
 
 	t.Run("list users", func(t *testing.T) {
@@ -186,6 +186,14 @@ func TestUserEndpoints(t *testing.T) {
 		}
 	})
 
+	t.Run("update user password", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := jsonRequest(t, http.MethodPost, basePath+"/users/1/password", map[string]any{"password": "new-secret"})
+		srv.ServeHTTP(rec, req)
+
+		assertStatus(t, rec, http.StatusNoContent)
+	})
+
 	t.Run("delete user", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodDelete, basePath+"/users/1", nil)
@@ -231,7 +239,7 @@ func TestVMEndpoints(t *testing.T) {
 	}
 	runtime := &stubVMRuntime{}
 	audit := &stubAudit{}
-	h := New(&fireslice.Service{Users: users, VMs: vms, VMRun: runtime}, Options{AuditLogger: audit})
+	h := newAuthedHandler(&fireslice.Service{Users: users, VMs: vms, VMRun: runtime}, audit, Principal{Subject: "admin", UserID: 99, Role: "admin"})
 	srv := h.HTTPHandler()
 
 	t.Run("list vms", func(t *testing.T) {
@@ -406,6 +414,118 @@ func TestVMEndpoints(t *testing.T) {
 	})
 }
 
+func TestUserScopedAuthorization(t *testing.T) {
+	now := mustTime("2026-03-30T12:00:00Z")
+	users := &stubUsers{
+		listUsers: []*db.User{{ID: 1, Handle: "alice", Email: "alice@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}, {ID: 2, Handle: "bob", Email: "bob@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}},
+		getUser: map[int64]*db.User{
+			1: {ID: 1, Handle: "alice", Email: "alice@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			2: {ID: 2, Handle: "bob", Email: "bob@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+		},
+		keysByUser:    map[int64][]*db.SSHKey{1: {}, 2: {}},
+		deleteKeyIDs:  map[int64]bool{},
+		deleteUserIDs: map[int64]bool{},
+	}
+	vms := &stubVMs{
+		listVMs: []*db.VM{
+			{ID: 20, UserID: 1, Name: "alice-box", Status: "running", Image: "ussyuntu", VCPU: 1, MemoryMB: 512, DiskGB: 10, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			{ID: 21, UserID: 2, Name: "bob-box", Status: "running", Image: "ussyuntu", VCPU: 1, MemoryMB: 512, DiskGB: 10, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+		},
+		getVM: map[int64]*db.VM{
+			20: {ID: 20, UserID: 1, Name: "alice-box", Status: "running", Image: "ussyuntu", VCPU: 1, MemoryMB: 512, DiskGB: 10, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			21: {ID: 21, UserID: 2, Name: "bob-box", Status: "running", Image: "ussyuntu", VCPU: 1, MemoryMB: 512, DiskGB: 10, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+		},
+		createVMResult: &db.VM{ID: 22, UserID: 2, Name: "newbox", Status: "creating", Image: "ussyuntu", VCPU: 1, MemoryMB: 512, DiskGB: 10, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+	}
+	runtime := &stubVMRuntime{}
+	audit := &stubAudit{}
+	h := newAuthedHandler(&fireslice.Service{Users: users, VMs: vms, VMRun: runtime}, audit, Principal{Subject: "bob", UserID: 2, Role: "user"})
+	srv := h.HTTPHandler()
+
+	t.Run("cannot list all users", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, basePath+"/users", nil)
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("can read self user", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, basePath+"/users/2", nil)
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusOK)
+	})
+
+	t.Run("cannot read another user", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, basePath+"/users/1", nil)
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("can update own password", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := jsonRequest(t, http.MethodPost, basePath+"/users/2/password", map[string]any{"password": "changed"})
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusNoContent)
+	})
+
+	t.Run("cannot update another password", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := jsonRequest(t, http.MethodPost, basePath+"/users/1/password", map[string]any{"password": "changed"})
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("lists only own vms", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, basePath+"/vms", nil)
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusOK)
+		body := decodeBody(t, rec)
+		items := body["vms"].([]any)
+		if len(items) != 1 {
+			t.Fatalf("vm count = %d, want 1", len(items))
+		}
+		first := items[0].(map[string]any)
+		if first["user_id"].(float64) != 2 {
+			t.Fatalf("user_id = %v, want 2", first["user_id"])
+		}
+	})
+
+	t.Run("forces create vm to current user", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := jsonRequest(t, http.MethodPost, basePath+"/vms", map[string]any{
+			"user_id":          1,
+			"name":             "newbox",
+			"image":            "ussyuntu",
+			"vcpu":             1,
+			"memory_mb":        512,
+			"disk_gb":          10,
+			"expose_subdomain": false,
+		})
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusCreated)
+		if vms.createVMInput.UserID != 2 {
+			t.Fatalf("created vm user id = %d, want 2", vms.createVMInput.UserID)
+		}
+	})
+
+	t.Run("cannot access another vm", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, basePath+"/vms/20", nil)
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("can access own vm", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, basePath+"/vms/21", nil)
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusOK)
+	})
+}
+
 type stubUsers struct {
 	listUsers        []*db.User
 	getUser          map[int64]*db.User
@@ -420,7 +540,7 @@ type stubUsers struct {
 	deleteKeyIDs     map[int64]bool
 }
 
-func (s *stubUsers) CreateUser(_ context.Context, handle, email string) (*db.User, error) {
+func (s *stubUsers) CreateUser(_ context.Context, handle, email, _ string, role string) (*db.User, error) {
 	s.createUserCalls++
 	if s.createUserErr != nil {
 		return nil, s.createUserErr
@@ -428,6 +548,9 @@ func (s *stubUsers) CreateUser(_ context.Context, handle, email string) (*db.Use
 	user := *s.createUserResult
 	user.Handle = handle
 	user.Email = email
+	if role != "" {
+		user.Role = role
+	}
 	return &user, nil
 }
 
@@ -438,6 +561,16 @@ func (s *stubUsers) GetUser(_ context.Context, id int64) (*db.User, error) {
 	}
 	copy := *user
 	return &copy, nil
+}
+
+func (s *stubUsers) GetUserByHandle(_ context.Context, handle string) (*db.User, error) {
+	for _, user := range s.getUser {
+		if user.Handle == handle {
+			copy := *user
+			return &copy, nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }
 
 func (s *stubUsers) ListUsers(_ context.Context) ([]*db.User, error) {
@@ -454,6 +587,13 @@ func (s *stubUsers) DeleteUser(_ context.Context, id int64) error {
 		return sql.ErrNoRows
 	}
 	s.deleteUserIDs[id] = true
+	return nil
+}
+
+func (s *stubUsers) UpdatePassword(_ context.Context, id int64, _ string) error {
+	if _, ok := s.getUser[id]; !ok {
+		return sql.ErrNoRows
+	}
 	return nil
 }
 
@@ -531,6 +671,18 @@ func (s *stubVMs) GetVM(_ context.Context, id int64) (*db.VM, error) {
 func (s *stubVMs) ListVMs(_ context.Context) ([]*db.VM, error) {
 	items := make([]*db.VM, 0, len(s.listVMs))
 	for _, vm := range s.listVMs {
+		copy := *vm
+		items = append(items, &copy)
+	}
+	return items, nil
+}
+
+func (s *stubVMs) ListVMsByUser(_ context.Context, userID int64) ([]*db.VM, error) {
+	items := make([]*db.VM, 0)
+	for _, vm := range s.listVMs {
+		if vm.UserID != userID {
+			continue
+		}
 		copy := *vm
 		items = append(items, &copy)
 	}
@@ -635,4 +787,15 @@ func mustTime(value string) time.Time {
 		panic(err)
 	}
 	return parsed
+}
+
+func newAuthedHandler(service *fireslice.Service, audit AuditLogger, principal Principal) *Handler {
+	return New(service, Options{
+		AuditLogger: audit,
+		AuthMiddleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), principal)))
+			})
+		},
+	})
 }

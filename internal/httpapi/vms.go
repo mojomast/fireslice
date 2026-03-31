@@ -51,8 +51,20 @@ func (h *Handler) handleListVMs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
-	vms, err := h.service.VMs.ListVMs(r.Context())
+	var (
+		vms []*db.VM
+		err error
+	)
+	if isAdmin(principal) {
+		vms, err = h.service.VMs.ListVMs(r.Context())
+	} else {
+		vms, err = h.service.VMs.ListVMsByUser(r.Context(), principal.UserID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to list VMs", nil)
 		return
@@ -90,6 +102,10 @@ func (h *Handler) handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	var req createVMRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -98,8 +114,12 @@ func (h *Handler) handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	details := map[string]string{}
-	if req.UserID <= 0 {
-		details["user_id"] = "user_id must be greater than zero"
+	if isAdmin(principal) {
+		if req.UserID <= 0 {
+			details["user_id"] = "user_id must be greater than zero"
+		}
+	} else {
+		req.UserID = principal.UserID
 	}
 	if msg := validateVMName(req.Name); msg != "" {
 		details["name"] = msg
@@ -169,20 +189,18 @@ func (h *Handler) handleGetVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
 		return
 	}
-
-	vm, err := h.service.VMs.GetVM(r.Context(), id)
-	if err != nil {
-		if isNotFound(err) {
-			writeError(w, http.StatusNotFound, "not_found", "VM not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to load VM", nil)
+	vm, ok := h.authorizeVMAccess(w, r, principal, id)
+	if !ok {
 		return
 	}
 	exposure, err := h.lookupExposure(r.Context(), vm.ID)
@@ -206,10 +224,17 @@ func (h *Handler) handleStartVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM runtime is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if _, ok := h.authorizeVMAccess(w, r, principal, id); !ok {
 		return
 	}
 	if err := h.service.StartVM(r.Context(), id); err != nil {
@@ -228,10 +253,17 @@ func (h *Handler) handleStopVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM runtime is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if _, ok := h.authorizeVMAccess(w, r, principal, id); !ok {
 		return
 	}
 	if err := h.service.StopVM(r.Context(), id); err != nil {
@@ -250,10 +282,17 @@ func (h *Handler) handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM runtime is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if _, ok := h.authorizeVMAccess(w, r, principal, id); !ok {
 		return
 	}
 	if err := h.service.DestroyVM(r.Context(), id); err != nil {
@@ -272,10 +311,17 @@ func (h *Handler) handlePatchVMExposure(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "VM service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if _, ok := h.authorizeVMAccess(w, r, principal, id); !ok {
 		return
 	}
 	var req patchExposureRequest

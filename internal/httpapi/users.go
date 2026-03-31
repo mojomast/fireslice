@@ -9,6 +9,8 @@ import (
 type createUserRequest struct {
 	Handle   string          `json:"handle"`
 	Email    string          `json:"email"`
+	Password string          `json:"password"`
+	Role     string          `json:"role"`
 	FirstKey *userKeyRequest `json:"first_key"`
 }
 
@@ -53,6 +55,14 @@ func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !isAdmin(principal) {
+		writeError(w, http.StatusForbidden, "forbidden", "forbidden", nil)
+		return
+	}
 
 	users, err := h.service.Users.ListUsers(r.Context())
 	if err != nil {
@@ -89,6 +99,14 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !isAdmin(principal) {
+		writeError(w, http.StatusForbidden, "forbidden", "forbidden", nil)
+		return
+	}
 
 	var req createUserRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -116,7 +134,7 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.Users.CreateUser(r.Context(), req.Handle, req.Email)
+	user, err := h.service.Users.CreateUser(r.Context(), req.Handle, req.Email, req.Password, req.Role)
 	if err != nil {
 		if isConflictError(err) {
 			writeError(w, http.StatusConflict, "conflict", "user already exists", nil)
@@ -169,10 +187,17 @@ func (h *Handler) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if !authorizeUserAccess(w, principal, id) {
 		return
 	}
 
@@ -226,6 +251,14 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !isAdmin(principal) {
+		writeError(w, http.StatusForbidden, "forbidden", "forbidden", nil)
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
@@ -254,10 +287,17 @@ func (h *Handler) handleAddUserKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if !authorizeUserAccess(w, principal, id) {
 		return
 	}
 
@@ -305,10 +345,17 @@ func (h *Handler) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
 		return
 	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
 
 	userID, err := parsePathID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if !authorizeUserAccess(w, principal, userID) {
 		return
 	}
 	keyID, err := parsePathID(r, "keyID")
@@ -326,6 +373,52 @@ func (h *Handler) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.auditEvent(r.Context(), "ssh_key.deleted", "ssh_key", keyID, ""); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to write audit log", nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleUpdateUserPassword(w http.ResponseWriter, r *http.Request) {
+	if h.service.Users == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
+		return
+	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
+
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+	if !authorizeUserAccess(w, principal, id) {
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON", nil)
+		return
+	}
+	if req.Password == "" {
+		writeError(w, http.StatusUnprocessableEntity, "validation_failed", "request validation failed", map[string]string{"password": "password is required"})
+		return
+	}
+	if err := h.service.Users.UpdatePassword(r.Context(), id, req.Password); err != nil {
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, "not_found", "user not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to update password", nil)
+		return
+	}
+	if err := h.auditEvent(r.Context(), "user.password_updated", "user", id, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to write audit log", nil)
 		return
 	}

@@ -7,17 +7,30 @@ import (
 	"strings"
 
 	appauth "github.com/mojomast/fireslice/internal/auth"
+	"golang.org/x/crypto/bcrypt"
 	gossh "golang.org/x/crypto/ssh"
 )
 
-func (d *DB) CreateFiresliceUser(ctx context.Context, handle, email string) (*User, error) {
+func (d *DB) CreateFiresliceUser(ctx context.Context, handle, email, passwordBcrypt, role string) (*User, error) {
 	handle = strings.TrimSpace(handle)
 	email = strings.TrimSpace(email)
+	passwordBcrypt = strings.TrimSpace(passwordBcrypt)
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = "user"
+	}
+	if passwordBcrypt != "" && !strings.HasPrefix(passwordBcrypt, "$2") {
+		hash, err := bcrypt.GenerateFromPassword([]byte(passwordBcrypt), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, fmt.Errorf("generate bcrypt hash: %w", err)
+		}
+		passwordBcrypt = string(hash)
+	}
 
 	var user User
 	err := d.WriteTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO users (handle, email) VALUES (?, ?)`, handle, email,
+			`INSERT INTO users (handle, email, password_bcrypt, role) VALUES (?, ?, ?, ?)`, handle, email, passwordBcrypt, role,
 		)
 		if err != nil {
 			return fmt.Errorf("insert user: %w", err)
@@ -27,24 +40,55 @@ func (d *DB) CreateFiresliceUser(ctx context.Context, handle, email string) (*Us
 			return err
 		}
 		return tx.QueryRowContext(ctx,
-			`SELECT id, handle, email, trust_level, created_at, updated_at FROM users WHERE id = ?`, id,
-		).Scan(&user.ID, &user.Handle, &user.Email, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users WHERE id = ?`, id,
+		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
 	})
 	if err != nil {
 		return nil, err
+	}
+	if user.Role == "" {
+		user.Role = "user"
 	}
 	return &user, nil
 }
 
 func (d *DB) GetFiresliceUser(ctx context.Context, id int64) (*User, error) {
-	return d.UserByID(ctx, id)
+	var user User
+	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users WHERE id = ?`, id,
+		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if user.Role == "" {
+		user.Role = "user"
+	}
+	return &user, nil
+}
+
+func (d *DB) GetFiresliceUserByHandle(ctx context.Context, handle string) (*User, error) {
+	var user User
+	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users WHERE handle = ?`, strings.TrimSpace(handle),
+		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if user.Role == "" {
+		user.Role = "user"
+	}
+	return &user, nil
 }
 
 func (d *DB) ListFiresliceUsers(ctx context.Context) ([]*User, error) {
 	users := make([]*User, 0)
 	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
-			`SELECT id, handle, email, trust_level, created_at, updated_at FROM users ORDER BY handle ASC, id ASC`,
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users ORDER BY handle ASC, id ASC`,
 		)
 		if err != nil {
 			return err
@@ -52,8 +96,11 @@ func (d *DB) ListFiresliceUsers(ctx context.Context) ([]*User, error) {
 		defer rows.Close()
 		for rows.Next() {
 			var user User
-			if err := rows.Scan(&user.ID, &user.Handle, &user.Email, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			if err := rows.Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt); err != nil {
 				return err
+			}
+			if user.Role == "" {
+				user.Role = "user"
 			}
 			users = append(users, &user)
 		}
@@ -157,4 +204,32 @@ func (d *DB) ListFiresliceSSHKeys(ctx context.Context, userID int64) ([]*SSHKey,
 		return nil, err
 	}
 	return keys, nil
+}
+
+func (d *DB) UpdateFiresliceUserPassword(ctx context.Context, userID int64, password string) error {
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return fmt.Errorf("password is required")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("generate bcrypt hash: %w", err)
+	}
+	return d.WriteTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE users SET password_bcrypt = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+			string(hash), userID,
+		)
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }

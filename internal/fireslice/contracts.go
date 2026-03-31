@@ -28,10 +28,12 @@ type VMExposure struct {
 }
 
 type UserStore interface {
-	CreateUser(ctx context.Context, handle, email string) (*db.User, error)
+	CreateUser(ctx context.Context, handle, email, password, role string) (*db.User, error)
 	GetUser(ctx context.Context, id int64) (*db.User, error)
+	GetUserByHandle(ctx context.Context, handle string) (*db.User, error)
 	ListUsers(ctx context.Context) ([]*db.User, error)
 	DeleteUser(ctx context.Context, id int64) error
+	UpdatePassword(ctx context.Context, userID int64, password string) error
 	AddSSHKey(ctx context.Context, userID int64, publicKey, label string) (*db.SSHKey, error)
 	DeleteSSHKey(ctx context.Context, userID, keyID int64) error
 	ListSSHKeys(ctx context.Context, userID int64) ([]*db.SSHKey, error)
@@ -41,6 +43,7 @@ type VMStore interface {
 	CreateVMRecord(ctx context.Context, input CreateVMInput) (*db.VM, error)
 	GetVM(ctx context.Context, id int64) (*db.VM, error)
 	ListVMs(ctx context.Context) ([]*db.VM, error)
+	ListVMsByUser(ctx context.Context, userID int64) ([]*db.VM, error)
 	UpdateVMStatus(ctx context.Context, id int64, status string) error
 	UpdateVMExposure(ctx context.Context, id int64, expose bool, subdomain string, port int) error
 	DeleteVM(ctx context.Context, id int64) error

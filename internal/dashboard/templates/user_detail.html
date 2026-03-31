@@ -8,15 +8,11 @@
 </head>
 <body>
 <main>
-  <nav>
-    <a href="/">VMs</a>
-    <a href="/users">Users</a>
-    <a href="/vms/new">New VM</a>
-    <a href="/settings">Settings</a>
-  </nav>
+  {{template "nav" .}}
   <div class="card">
     <h1>{{index .User "handle"}}</h1>
     <p>{{index .User "email"}}</p>
+    <p>{{index .User "role"}} / {{index .User "trust_level"}}</p>
   </div>
   <div class="card">
     <h2>SSH keys</h2>
@@ -35,6 +31,13 @@
         {{end}}
       </tbody>
     </table>
+  </div>
+  <div class="card">
+    <h2>Password</h2>
+    <form method="post" action="/users/{{index .User "id"}}/password">
+      <input type="password" name="password" placeholder="new password" required>
+      <button type="submit">Update password</button>
+    </form>
   </div>
   <div class="card">
     <h2>VMs</h2>

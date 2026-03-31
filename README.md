@@ -1,67 +1,76 @@
 # fireslice
 
-`fireslice` is a stripped-down operator-managed VM hosting platform built on top of the reusable Firecracker, SQLite, metadata, networking, and Caddy pieces extracted from `ussycode`.
+`fireslice` is a Firecracker-based VM control plane for small operator-managed hosting.
 
-It is intentionally narrower than the original product:
+It is a narrowed fork of the reusable infrastructure extracted from `ussycode`, with a split deployment model:
 
-- one operator/admin
-- many managed users
-- each VM belongs to one user
-- users authenticate with SSH keys injected into their VM
-- operator creates, starts, stops, destroys, exposes, and hides VMs
-- management happens through a small dashboard and admin-only REST API
+- the `fireslice` control plane runs in Docker or as a single binary
+- Firecracker, KVM, networking, kernel assets, image tooling, and VM storage stay on the host
+- one admin can bootstrap and manage users, quotas, SSH keys, and VMs
+- users can log in with passwords and manage their own account, keys, and VMs through the dashboard
 
-## What It Does
+## Current Product Shape
 
-`fireslice` is for running friend-managed personal VMs without the rest of the old product surface.
+- `cmd/fireslice` is the active entrypoint
+- dashboard and API live on the same control plane
+- sessions are cookie-based
+- bootstrap admin auth still comes from `FIRESLICE_ADMIN_USER` and `FIRESLICE_ADMIN_PASS_BCRYPT`
+- DB-backed users have `role` and `password_bcrypt`
+- the dashboard is role-aware for admin vs user flows
+- the `/api/admin` API now supports admin-only and admin-or-self authorization, depending on the endpoint
 
-Primary workflow:
+This repo is intentionally smaller than the old `ussycode` surface. It does not center the product around the SSH REPL, tutorial flow, exec API, email, arena/community features, or multi-node compute pool.
 
-1. Operator logs into the dashboard.
-2. Operator creates a user.
-3. Operator adds one or more SSH public keys for that user.
-4. Operator creates a VM with CPU, RAM, disk, and optional exposure settings.
-5. User SSHs directly into that VM.
-6. Operator can later start, stop, destroy, expose, or hide it.
+## What Works Today
 
-## Reused Infrastructure
+- admin login
+- DB-backed user login with bcrypt passwords
+- admin user creation with role and password
+- user-scoped dashboard views
+- user password updates
+- user SSH key management
+- VM CRUD and exposure management at the control-plane level
+- split deployment artifacts for a Dockerized control plane plus host runtime dependencies
 
-This repo reuses the parts of the old system that were already reality-based and working well:
+## What Is Still Incomplete
 
-- Firecracker VM runtime
-- TAP/bridge/nftables networking
-- SQLite models and migrations
-- metadata service for boot-time guest configuration
-- Caddy admin API route management
-- `ussyuntu` guest image bootstrap
-
-It does not build the product around the old SSH REPL, tutorial flow, exec API, email, community features, or cluster features.
+- public HTTPS for `slice.ussyco.de` is not guaranteed until the host Caddy setup is actually healthy
+- wildcard VM exposure does not work without real wildcard DNS plus wildcard TLS
+- VM runtime should not be treated as fully working until Firecracker, metadata, host networking, image import, and guest boot are all verified end-to-end on the host
+- some older repo areas still contain legacy `ussycode` code and docs that are historical, not current fireslice behavior
 
 ## Main Components
 
-- `cmd/fireslice`: stripped-down binary
-- `internal/fireslice`: shared service layer and config
-- `internal/httpapi`: admin REST API under `/api/admin`
-- `internal/dashboard`: minimal HTML dashboard
-- `internal/sessionauth`: admin login and session cookies
-- `internal/db`: reused schema plus fireslice-specific CRUD helpers
-- `internal/vm`: Firecracker manager with options-based create/start path
-- `internal/gateway`: metadata server that resolves the current owner keys from DB
-- `internal/proxy`: Caddy route manager used for public VM exposure
+- `cmd/fireslice`: active binary entrypoint
+- `internal/fireslice`: service layer and config
+- `internal/dashboard`: server-rendered HTML dashboard
+- `internal/httpapi`: authenticated JSON API under `/api/admin`
+- `internal/sessionauth`: login and session cookie management
+- `internal/db`: SQLite schema, migrations, and fireslice CRUD helpers
+- `internal/vm`: Firecracker runtime manager
+- `internal/gateway`: metadata service
+- `internal/proxy`: Caddy admin API route manager
 
-## Admin API
+## API Summary
 
 Base path: `/api/admin`
 
-Current endpoints:
+Admin-only endpoints:
 
 - `GET /api/admin/health`
 - `GET /api/admin/users`
 - `POST /api/admin/users`
-- `GET /api/admin/users/:id`
 - `DELETE /api/admin/users/:id`
+
+Admin-or-self user endpoints:
+
+- `GET /api/admin/users/:id`
 - `POST /api/admin/users/:id/keys`
 - `DELETE /api/admin/users/:id/keys/:keyID`
+- `POST /api/admin/users/:id/password`
+
+Admin sees all VMs; non-admin sees/manages only owned VMs:
+
 - `GET /api/admin/vms`
 - `POST /api/admin/vms`
 - `GET /api/admin/vms/:id`
@@ -70,11 +79,7 @@ Current endpoints:
 - `DELETE /api/admin/vms/:id`
 - `PATCH /api/admin/vms/:id/exposure`
 
-All endpoints are admin-authenticated.
-
-## Dashboard
-
-Current pages:
+## Dashboard Pages
 
 - `/login`
 - `/`
@@ -83,11 +88,9 @@ Current pages:
 - `/vms/new`
 - `/settings`
 
-The dashboard is intentionally minimal and server-rendered with `html/template`.
+For non-admin users, `/users` redirects to their own account page.
 
 ## Configuration
-
-`fireslice` uses `FIRESLICE_` environment variables or equivalent flags.
 
 Important settings:
 
@@ -106,40 +109,35 @@ FIRESLICE_ADMIN_USER=admin
 FIRESLICE_ADMIN_PASS_BCRYPT=<bcrypt-hash>
 ```
 
-## Build
+## Build And Test
+
+Use a modern Go toolchain. In the current deployment work, `/usr/local/go/bin/go` is the correct binary.
 
 ```bash
-go build ./cmd/fireslice
+/usr/local/go/bin/go test ./internal/db ./internal/fireslice ./internal/httpapi ./internal/sessionauth ./internal/dashboard
+/usr/local/go/bin/go build ./cmd/fireslice
 ```
 
-## Run
+## Deployment Notes
 
-```bash
-FIRESLICE_DOMAIN=slice.ussyco.de \
-FIRESLICE_ADMIN_USER=admin \
-FIRESLICE_ADMIN_PASS_BCRYPT='<bcrypt-hash>' \
-go run ./cmd/fireslice
-```
+The intended public control plane host is `slice.ussyco.de`.
 
-## Test
+The recommended deployment model is split:
 
-Focused package verification used during integration:
+- run the control plane from `deploy/docker/fireslice-control/`
+- keep Firecracker, `/dev/kvm`, `/dev/net/tun`, bridge setup, nftables, image tooling, and persistent storage on the host
+- place a real host Caddy or equivalent reverse proxy in front of `127.0.0.1:9090`
 
-```bash
-go test ./internal/db ./internal/fireslice ./internal/httpapi ./internal/vm ./internal/gateway ./internal/sessionauth ./internal/dashboard
-go build ./cmd/fireslice
-```
+Do not claim VM exposure works unless all of these are true:
 
-## Runtime Notes
+- wildcard DNS resolves `*.slice.ussyco.de`
+- wildcard TLS is configured and issuing successfully
+- Caddy admin API is reachable by fireslice
+- the guest app is actually listening on `0.0.0.0:<exposed_port>`
 
-- Firecracker and VM networking still require a Linux host with the right privileges.
-- The dashboard/control plane can start even if VM provisioning dependencies are missing, but VM lifecycle actions will not work until Firecracker, kernel, bridge, and Caddy are available.
-- VM exposure is backed by Caddy routes and only succeeds for running VMs.
-- Boot-time SSH key injection resolves keys from the current VM owner in the database, so key changes take effect on restart.
+## Repo State
 
-## Repository Origin
-
-This repository was split from `mojomast/ussycode` to ship the narrower `fireslice` product as its own standalone codebase.
+This repository still contains historical `ussycode` code and documentation for older product areas. Those files should be treated as legacy unless they explicitly mention `fireslice` and the split deployment model.
 
 ## License
 

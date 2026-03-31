@@ -8,13 +8,9 @@
 </head>
 <body>
 <main>
-  <nav>
-    <a href="/">VMs</a>
-    <a href="/users">Users</a>
-    <a href="/vms/new">New VM</a>
-    <a href="/settings">Settings</a>
-  </nav>
+  {{template "nav" .}}
   <h1>Settings</h1>
+  {{if not .IsAdmin}}<p>Account settings for {{index .Config "handle"}}</p>{{end}}
   <table>
     <thead><tr><th>Key</th><th>Value</th></tr></thead>
     <tbody>
