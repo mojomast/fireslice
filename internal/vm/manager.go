@@ -9,11 +9,19 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mojomast/fireslice/internal/db"
 )
 
 const defaultDataDiskGB = 5
+
+const provisioningTimeout = 10 * time.Minute
+const firecrackerBootGracePeriod = 5 * time.Second
+
+func provisioningContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), provisioningTimeout)
+}
 
 var createEmptyExt4Func = createEmptyExt4
 
@@ -108,6 +116,9 @@ func NewManager(database *db.DB, cfg *ManagerConfig, logger *slog.Logger) (*Mana
 	if err != nil {
 		return nil, fmt.Errorf("init network manager: %w", err)
 	}
+	if err := loadPersistedNetworkLeases(context.Background(), database, network); err != nil {
+		logger.Warn("failed to restore persisted VM network leases", "error", err)
+	}
 
 	// Initialize Firecracker backend
 	fc, err := NewFirecrackerBackend(
@@ -143,6 +154,20 @@ func (m *Manager) SeedAuthorizedKeys(ctx context.Context, vmID int64, keys []str
 
 	if len(keys) == 0 {
 		return nil
+	}
+
+	homeExists, err := ext4PathExists(ctx, rootfs, "/home/ussycode")
+	if err != nil {
+		return fmt.Errorf("stat guest home: %w", err)
+	}
+	if !homeExists {
+		m.logger.Warn("skipping authorized keys for guest without /home/ussycode",
+			"vm_id", vmID,
+		)
+		return nil
+	}
+	if err := mkdirExt4(ctx, rootfs, "/home/ussycode/.ssh"); err != nil {
+		return err
 	}
 
 	tmpFile, err := os.CreateTemp("", "ussycode-authorized-keys-*.txt")
@@ -183,7 +208,7 @@ func (m *Manager) SeedAuthorizedKeys(ctx context.Context, vmID int64, keys []str
 }
 
 func (m *Manager) configureGuestSSH(ctx context.Context, rootfs string) error {
-	if err := rewriteExt4File(ctx, rootfs, "/etc/ssh/sshd_config", 0, 0, "0100644", func(s string) string {
+	if err := rewriteExt4FileIfExists(ctx, rootfs, "/etc/ssh/sshd_config", 0, 0, "0100644", func(s string) string {
 		if strings.Contains(s, "\nUsePAM yes\n") {
 			s = strings.ReplaceAll(s, "\nUsePAM yes\n", "\nUsePAM no\n")
 		}
@@ -198,7 +223,7 @@ func (m *Manager) configureGuestSSH(ctx context.Context, rootfs string) error {
 		return fmt.Errorf("patch sshd_config: %w", err)
 	}
 
-	if err := rewriteExt4File(ctx, rootfs, "/etc/shadow", 0, 42, "0100640", func(s string) string {
+	if err := rewriteExt4FileIfExists(ctx, rootfs, "/etc/shadow", 0, 42, "0100640", func(s string) string {
 		lines := strings.Split(s, "\n")
 		for i, line := range lines {
 			if !strings.HasPrefix(line, "ussycode:") {
@@ -216,7 +241,7 @@ func (m *Manager) configureGuestSSH(ctx context.Context, rootfs string) error {
 		return fmt.Errorf("patch shadow: %w", err)
 	}
 
-	if err := rewriteExt4File(ctx, rootfs, "/usr/bin/sudo", 0, 0, "0104755", func(s string) string {
+	if err := rewriteExt4FileIfExists(ctx, rootfs, "/usr/bin/sudo", 0, 0, "0104755", func(s string) string {
 		return s
 	}); err != nil {
 		return fmt.Errorf("patch sudo permissions: %w", err)
@@ -319,6 +344,9 @@ func shellQuote(s string) string {
 
 func (m *Manager) installOpencodeRuntimeFiles(ctx context.Context, rootfs string) error {
 	base := filepath.Join("home", "ussycode", ".config", "opencode")
+	if err := mkdirExt4(ctx, rootfs, "/home/ussycode"); err != nil {
+		return err
+	}
 	if err := mkdirExt4(ctx, rootfs, "/home/ussycode/.config"); err != nil {
 		return err
 	}
@@ -347,6 +375,18 @@ func (m *Manager) installOpencodeRuntimeFiles(ctx context.Context, rootfs string
 	return nil
 }
 
+func ext4PathExists(ctx context.Context, rootfs, guestPath string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "debugfs", "-R", fmt.Sprintf("stat %s", guestPath), rootfs)
+	out, err := cmd.CombinedOutput()
+	if strings.Contains(string(out), "File not found") {
+		return false, nil
+	}
+	if err == nil {
+		return true, nil
+	}
+	return false, fmt.Errorf("debugfs stat %s: %s: %w", guestPath, string(out), err)
+}
+
 func mkdirExt4(ctx context.Context, rootfs, dir string) error {
 	cmd := exec.CommandContext(ctx, "debugfs", "-w", "-R", fmt.Sprintf("mkdir %s", dir), rootfs)
 	out, err := cmd.CombinedOutput()
@@ -354,6 +394,17 @@ func mkdirExt4(ctx context.Context, rootfs, dir string) error {
 		return fmt.Errorf("debugfs mkdir %s: %s: %w", dir, string(out), err)
 	}
 	return nil
+}
+
+func rewriteExt4FileIfExists(ctx context.Context, rootfs, guestPath string, uid, gid int, mode string, mutate func(string) string) error {
+	exists, err := ext4PathExists(ctx, rootfs, guestPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	return rewriteExt4File(ctx, rootfs, guestPath, uid, gid, mode, mutate)
 }
 
 func writeExt4File(ctx context.Context, rootfs, guestPath, content string, uid, gid int, mode string) error {
@@ -526,6 +577,9 @@ func (m *Manager) createDataDisk(ctx context.Context, vmID int64, dataDiskGB int
 }
 
 func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) error {
+	provisionCtx, cancel := provisioningContext(ctx)
+	defer cancel()
+
 	m.logger.Info("creating and starting VM",
 		"vm_id", cfg.VMID,
 		"name", cfg.Name,
@@ -536,14 +590,14 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	)
 
 	// Update status to creating
-	if err := m.db.UpdateVMStatus(ctx, cfg.VMID, "creating", nil, nil, nil, nil); err != nil {
+	if err := m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "creating", nil, nil, nil, nil); err != nil {
 		return fmt.Errorf("update status to creating: %w", err)
 	}
 
 	// 1. Ensure rootfs image exists (pull + extract + mkfs.ext4)
-	rootfsPath, imgCfg, err := m.images.EnsureRootfs(ctx, cfg.ImageRef)
+	rootfsPath, imgCfg, err := m.images.EnsureRootfs(provisionCtx, cfg.ImageRef)
 	if err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("ensure rootfs: %w", err)
 	}
 
@@ -551,47 +605,47 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	// (base image is shared/cached, each VM gets its own copy)
 	vmRootfs := filepath.Join(m.dataDir, "disks", fmt.Sprintf("vm-%d-rootfs.ext4", cfg.VMID))
 	if err := copyFile(rootfsPath, vmRootfs); err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("copy rootfs: %w", err)
 	}
-	if err := m.SeedAuthorizedKeys(ctx, cfg.VMID, cfg.SSHKeys); err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+	if err := m.SeedAuthorizedKeys(provisionCtx, cfg.VMID, cfg.SSHKeys); err != nil {
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("seed authorized keys: %w", err)
 	}
-	if err := m.installGuestRuntime(ctx, vmRootfs, cfg, imgCfg); err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+	if err := m.installGuestRuntime(provisionCtx, vmRootfs, cfg, imgCfg); err != nil {
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("install guest runtime: %w", err)
 	}
 
 	// 3. Create a persistent data disk for the user
-	dataDiskPath, err := m.createDataDisk(ctx, cfg.VMID, cfg.DataDiskGB)
+	dataDiskPath, err := m.createDataDisk(provisionCtx, cfg.VMID, cfg.DataDiskGB)
 	if err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("create data disk: %w", err)
 	}
 
 	// 4. Allocate network (TAP device + IP)
 	vmIDStr := fmt.Sprintf("%d", cfg.VMID)
 	if err := m.network.SetupBridge(); err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("setup bridge: %w", err)
 	}
 	netCfg, err := m.network.AllocateNetwork(vmIDStr)
 	if err != nil {
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("allocate network: %w", err)
 	}
 
 	// 5. Boot the VM
 	if fw, ok := m.network.(*NetworkManager); ok {
-		if err := fw.firewall.AddVMRules(ctx, vmIDStr, netCfg.TapDevice, netCfg.GuestIP, fw.bridge); err != nil {
+		if err := fw.firewall.AddVMRules(provisionCtx, vmIDStr, netCfg.TapDevice, netCfg.GuestIP, fw.bridge); err != nil {
 			m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
-			m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+			m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 			return fmt.Errorf("add VM firewall rules: %w", err)
 		}
 	}
 
-	fcVM, err := m.fc.StartVM(ctx, &VMStartOptions{
+	fcVM, err := m.fc.StartVM(provisionCtx, &VMStartOptions{
 		VMID:          vmIDStr,
 		RootfsPath:    vmRootfs,
 		DataDiskPath:  dataDiskPath,
@@ -601,13 +655,18 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	})
 	if err != nil {
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
-		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("start VM: %w", err)
 	}
 
-	// 6. Update DB with runtime info
+	// 6. Confirm the VMM survives guest boot before reporting success.
 	pid := fcVM.Pid()
-	if err := m.db.UpdateVMStatus(ctx, cfg.VMID, "running",
+	if !firecrackerStayedRunning(fcVM, firecrackerBootGracePeriod) {
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("firecracker exited during guest boot")
+	}
+	if err := m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "running",
 		&netCfg.TapDevice,
 		&netCfg.GuestIP,
 		&netCfg.MacAddress,
@@ -635,6 +694,36 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	)
 
 	return nil
+}
+
+func loadPersistedNetworkLeases(ctx context.Context, database *db.DB, backend NetworkBackend) error {
+	nm, ok := backend.(*NetworkManager)
+	if !ok || database == nil {
+		return nil
+	}
+	vms, err := database.ListFiresliceVMs(ctx)
+	if err != nil {
+		return err
+	}
+	leases := make(map[string]string)
+	for _, vm := range vms {
+		if !vm.IPAddress.Valid {
+			continue
+		}
+		if vm.Status != "running" && vm.Status != "creating" {
+			continue
+		}
+		leases[fmt.Sprintf("%d", vm.ID)] = vm.IPAddress.String
+	}
+	return nm.LoadLeases(leases)
+}
+
+func firecrackerStayedRunning(fcVM *FirecrackerVM, grace time.Duration) bool {
+	if fcVM == nil {
+		return false
+	}
+	time.Sleep(grace)
+	return fcVM.IsRunning()
 }
 
 // Start boots an existing stopped VM that already has disk images.

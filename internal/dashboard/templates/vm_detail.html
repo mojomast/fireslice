@@ -32,7 +32,8 @@
     <p><strong>Exposed port:</strong> <code>{{index .VM "exposed_port"}}</code></p>
     <p><strong>Created:</strong> {{index .VM "created_at"}}</p>
     {{if index .VM "public_url"}}<p><strong>Public URL:</strong> <a href="{{index .VM "public_url"}}">{{index .VM "public_url"}}</a></p>{{end}}
-    {{if index .VM "ssh_target"}}<p><strong>SSH:</strong> <code>{{index .VM "ssh_target"}}</code></p>{{end}}
+    <p><strong>SSH:</strong> {{if index .VM "ssh_target"}}<code>{{index .VM "ssh_target"}}</code>{{else}}<span class="muted">Not directly reachable from outside the host</span>{{end}}</p>
+    <p class="muted">{{index .VM "ssh_hint"}}</p>
   </div>
 
   <div class="card">

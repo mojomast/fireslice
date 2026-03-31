@@ -195,9 +195,7 @@ func (h *Handler) renderVMDetail(w http.ResponseWriter, r *http.Request, princip
 		publicURL = "https://" + vm.Subdomain.String + "." + domain
 	}
 	sshTarget := ""
-	if vm.IPAddress.Valid {
-		sshTarget = "ssh ussycode@" + vm.IPAddress.String
-	}
+	sshHint := "SSH currently requires a real reachable ingress path. The private 10.x guest IP is host-internal and not directly reachable by users."
 	stateHint := "The VM record exists, but it is not running yet. Start it before trying to connect."
 	if vm.Status == "running" {
 		stateHint = "The VM is running. If the public URL returns 502, the guest service is not reachable on the exposed port yet."
@@ -217,6 +215,7 @@ func (h *Handler) renderVMDetail(w http.ResponseWriter, r *http.Request, princip
 			"exposed_port":   vm.ExposedPort,
 			"public_url":     publicURL,
 			"ssh_target":     sshTarget,
+			"ssh_hint":       sshHint,
 			"created_at":     vm.CreatedAt.Time.Format("2006-01-02 15:04"),
 			"state_hint":     stateHint,
 			"expose_enabled": vm.ExposeSubdomain,

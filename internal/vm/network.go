@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
+	"sort"
 	"sync"
 )
 
@@ -114,19 +115,62 @@ func (nm *NetworkManager) SetupBridge() error {
 	return nil
 }
 
+// LoadLeases repopulates in-memory IP allocations from persisted VM state.
+// This prevents reusing guest IPs after the control plane restarts.
+func (nm *NetworkManager) LoadLeases(vmIPs map[string]string) error {
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
+
+	nm.allocated = make(map[string]string, len(vmIPs))
+	ips := make([]uint32, 0, len(vmIPs))
+	for vmID, rawIP := range vmIPs {
+		ip := net.ParseIP(rawIP).To4()
+		if ip == nil || !nm.subnet.Contains(ip) {
+			continue
+		}
+		nm.allocated[vmID] = ip.String()
+		ips = append(ips, binary.BigEndian.Uint32(ip))
+	}
+	if len(ips) == 0 {
+		return nil
+	}
+	sort.Slice(ips, func(i, j int) bool { return ips[i] < ips[j] })
+	next := ips[len(ips)-1] + 1
+	if next == binary.BigEndian.Uint32(nm.gateway.To4()) {
+		next++
+	}
+	nm.nextIP = next
+	return nil
+}
+
 // AllocateNetwork creates a TAP device and assigns an IP for a new VM.
 func (nm *NetworkManager) AllocateNetwork(vmID string) (*NetworkConfig, error) {
 	nm.mu.Lock()
 	defer nm.mu.Unlock()
 
 	// Allocate next IP
-	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, nm.nextIP)
-	nm.nextIP++
+	var ip net.IP
+	for {
+		candidate := make(net.IP, 4)
+		binary.BigEndian.PutUint32(candidate, nm.nextIP)
+		nm.nextIP++
 
-	// Check if IP is still within subnet
-	if !nm.subnet.Contains(ip) {
-		return nil, fmt.Errorf("subnet exhausted: no more IPs available")
+		if !nm.subnet.Contains(candidate) {
+			return nil, fmt.Errorf("subnet exhausted: no more IPs available")
+		}
+		candidateStr := candidate.String()
+		inUse := false
+		for _, allocated := range nm.allocated {
+			if allocated == candidateStr {
+				inUse = true
+				break
+			}
+		}
+		if inUse {
+			continue
+		}
+		ip = candidate
+		break
 	}
 
 	// Generate a unique TAP device name

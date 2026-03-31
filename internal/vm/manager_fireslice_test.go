@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,5 +137,70 @@ func TestManagerCreateDataDiskRejectsInvalidSize(t *testing.T) {
 	}
 	if called {
 		t.Fatal("createEmptyExt4() was called for invalid disk size")
+	}
+}
+
+func TestProvisioningContextIgnoresParentCancellation(t *testing.T) {
+	t.Parallel()
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	cancelParent()
+
+	ctx, cancel := provisioningContext(parent)
+	defer cancel()
+
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("provisioningContext() err = %v, want active context", err)
+	}
+	if deadline, ok := ctx.Deadline(); !ok || deadline.IsZero() {
+		t.Fatal("provisioningContext() missing deadline")
+	}
+}
+
+func TestRewriteExt4FileIfExistsSkipsMissingPath(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
+		t.Skip("mkfs.ext4 not installed")
+	}
+	if _, err := exec.LookPath("debugfs"); err != nil {
+		t.Skip("debugfs not installed")
+	}
+
+	rootfs := filepath.Join(t.TempDir(), "rootfs.ext4")
+	f, err := os.Create(rootfs)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := f.Truncate(16 * 1024 * 1024); err != nil {
+		f.Close()
+		t.Fatalf("Truncate() error = %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	cmd := exec.Command("mkfs.ext4", "-F", "-q", rootfs)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mkfs.ext4 error = %v, output = %s", err, string(out))
+	}
+
+	called := false
+	err = rewriteExt4FileIfExists(context.Background(), rootfs, "/missing", 0, 0, "0100644", func(s string) string {
+		called = true
+		return s + "changed"
+	})
+	if err != nil {
+		t.Fatalf("rewriteExt4FileIfExists() error = %v", err)
+	}
+	if called {
+		t.Fatal("rewriteExt4FileIfExists() called mutate for missing path")
+	}
+}
+
+func TestFirecrackerStayedRunningReturnsFalseForNil(t *testing.T) {
+	t.Parallel()
+
+	if firecrackerStayedRunning(nil, 0) {
+		t.Fatal("firecrackerStayedRunning(nil) = true, want false")
 	}
 }
