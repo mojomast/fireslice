@@ -61,22 +61,21 @@ func NewFirecrackerBackend(firecrackerBin, kernelPath, initrdPath, dataDir strin
 		return nil, fmt.Errorf("kernel not found at %s: %w", kernelPath, err)
 	}
 
-	if initrdPath == "" {
-		initrdPath = filepath.Join(dataDir, "initrd.img")
-	}
-	if _, err := os.Stat(initrdPath); err != nil {
-		fallbacks := []string{
-			"/boot/initrd.img-6.12.74+deb13+1-cloud-amd64",
-			"/boot/initrd.img-6.12.74+deb13+1-amd64",
-		}
-		for _, candidate := range fallbacks {
-			if _, err := os.Stat(candidate); err == nil {
-				initrdPath = candidate
-				break
-			}
-		}
+	if initrdPath != "" {
 		if _, err := os.Stat(initrdPath); err != nil {
-			initrdPath = ""
+			fallbacks := []string{
+				"/boot/initrd.img-6.12.74+deb13+1-cloud-amd64",
+				"/boot/initrd.img-6.12.74+deb13+1-amd64",
+			}
+			for _, candidate := range fallbacks {
+				if _, err := os.Stat(candidate); err == nil {
+					initrdPath = candidate
+					break
+				}
+			}
+			if _, err := os.Stat(initrdPath); err != nil {
+				initrdPath = ""
+			}
 		}
 	}
 
@@ -113,6 +112,13 @@ func (fb *FirecrackerBackend) StartVM(ctx context.Context, opts *VMStartOptions)
 	// The guest rootfs is container-derived, so we boot through an injected PID 1
 	// instead of assuming systemd or kernel ip= handling inside the guest image.
 	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rootwait rootfstype=ext4 rw init=/usr/local/bin/fireslice-guest-init"
+	if opts.NetworkConfig != nil {
+		bootArgs += fmt.Sprintf(" ip=%s::%s:%s::eth0:off",
+			opts.NetworkConfig.GuestIP,
+			opts.NetworkConfig.GatewayIP,
+			cidrMaskToNetmask(opts.NetworkConfig.SubnetMask),
+		)
+	}
 
 	// Create firecracker config
 	fcCfg := firecracker.Config{
@@ -158,8 +164,10 @@ func (fb *FirecrackerBackend) StartVM(ctx context.Context, opts *VMStartOptions)
 		}
 	}
 
-	// Create machine
-	vmCtx, cancel := context.WithCancel(ctx)
+	// Keep the VMM lifecycle independent from the provisioning/request context.
+	// Startup should still fail fast on explicit errors, but a successful VM must
+	// not be torn down when CreateAndStart returns and its timeout context is canceled.
+	vmCtx, cancel := context.WithCancel(context.Background())
 
 	logFile, err := os.Create(logPath)
 	if err != nil {
@@ -258,14 +266,28 @@ func (vm *FirecrackerVM) IsRunning() bool {
 		return false
 	}
 	pid, err := vm.machine.PID()
-	if err != nil || pid <= 0 {
-		return false
-	}
-	state, err := processState(pid)
 	if err != nil {
 		return false
 	}
-	return state != "Z" && state != "X"
+	return processIsFirecracker(int64(pid))
+}
+
+func processIsFirecracker(pid int64) bool {
+	if pid <= 0 {
+		return false
+	}
+	state, err := processState(int(pid))
+	if err != nil {
+		return false
+	}
+	if state == "Z" || state == "X" {
+		return false
+	}
+	cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.FormatInt(pid, 10), "cmdline"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(cmdline), "firecracker")
 }
 
 func processState(pid int) (string, error) {

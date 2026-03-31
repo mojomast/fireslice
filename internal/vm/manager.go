@@ -135,7 +135,7 @@ func NewManager(database *db.DB, cfg *ManagerConfig, logger *slog.Logger) (*Mana
 		return nil, fmt.Errorf("init firecracker: %w", err)
 	}
 
-	return &Manager{
+	mgr := &Manager{
 		db:      database,
 		images:  images,
 		network: network,
@@ -143,7 +143,83 @@ func NewManager(database *db.DB, cfg *ManagerConfig, logger *slog.Logger) (*Mana
 		dataDir: cfg.DataDir,
 		logger:  logger,
 		running: make(map[int64]*RunningVM),
-	}, nil
+	}
+	if err := mgr.ReconcilePersistedState(context.Background()); err != nil {
+		logger.Warn("failed to reconcile persisted VM state", "error", err)
+	}
+	return mgr, nil
+}
+
+// ReconcilePersistedState clears stale running/creating VM records and leaked
+// host-side network artifacts left behind by dead Firecracker processes.
+func (m *Manager) ReconcilePersistedState(ctx context.Context) error {
+	if m.db == nil {
+		return nil
+	}
+	vms, err := m.db.ListFiresliceVMs(ctx)
+	if err != nil {
+		return err
+	}
+	activeTaps := make(map[string]struct{})
+	for _, vmRecord := range vms {
+		if vmRecord.PID.Valid && processIsFirecracker(vmRecord.PID.Int64) {
+			if vmRecord.TapDevice.Valid {
+				activeTaps[vmRecord.TapDevice.String] = struct{}{}
+			}
+			continue
+		}
+		if vmRecord.Status != "running" && vmRecord.Status != "creating" {
+			continue
+		}
+
+		m.logger.Info("cleaning stale VM state",
+			"vm_id", vmRecord.ID,
+			"name", vmRecord.Name,
+			"status", vmRecord.Status,
+		)
+
+		if vmRecord.TapDevice.Valid {
+			if fw, ok := m.network.(*NetworkManager); ok {
+				_ = fw.firewall.RemoveVMRules(ctx, fmt.Sprintf("%d", vmRecord.ID), vmRecord.TapDevice.String, fw.bridge)
+			}
+			_ = m.network.ReleaseNetwork(fmt.Sprintf("%d", vmRecord.ID), vmRecord.TapDevice.String)
+		}
+
+		runDir := filepath.Join(m.dataDir, "run", fmt.Sprintf("%d", vmRecord.ID))
+		if err := os.RemoveAll(runDir); err != nil {
+			m.logger.Warn("failed to remove stale VM run dir", "vm_id", vmRecord.ID, "path", runDir, "error", err)
+		}
+
+		if err := m.db.UpdateVMStatus(ctx, vmRecord.ID, "stopped", nil, nil, nil, nil); err != nil {
+			m.logger.Warn("failed to mark stale VM stopped", "vm_id", vmRecord.ID, "error", err)
+		}
+	}
+	if nm, ok := m.network.(*NetworkManager); ok {
+		if err := nm.CleanupOrphanedTapDevices(activeTaps); err != nil {
+			m.logger.Warn("failed to cleanup orphaned tap devices", "error", err)
+		}
+	}
+	return loadPersistedNetworkLeases(ctx, m.db, m.network)
+}
+
+// ReconcileVMRoutes removes Caddy routes for VMs that are no longer running.
+func (m *Manager) ReconcileVMRoutes(ctx context.Context, removeRoute func(context.Context, string) error) error {
+	if m.db == nil || removeRoute == nil {
+		return nil
+	}
+	vms, err := m.db.ListFiresliceVMs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, vmRecord := range vms {
+		if !vmRecord.Subdomain.Valid || vmRecord.Status == "running" || vmRecord.Status == "creating" {
+			continue
+		}
+		if err := removeRoute(ctx, vmRecord.Subdomain.String); err != nil {
+			m.logger.Warn("failed to remove stale VM route", "vm_id", vmRecord.ID, "subdomain", vmRecord.Subdomain.String, "error", err)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) SeedAuthorizedKeys(ctx context.Context, vmID int64, keys []string) error {
@@ -329,6 +405,9 @@ type guestRuntimeConfig struct {
 func guestCommandParts(imgCfg *ImageConfig) []string {
 	parts := append([]string{}, imgCfg.Entrypoint...)
 	parts = append(parts, imgCfg.Cmd...)
+	if len(parts) == 1 && parts[0] == "bash" {
+		return []string{"/bin/sh"}
+	}
 	if len(parts) == 0 {
 		return []string{"/bin/sh"}
 	}

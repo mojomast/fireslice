@@ -74,6 +74,11 @@ func main() {
 	if !proxyMgr.Healthy(ctx) {
 		logger.Warn("Caddy admin API not reachable", "admin_api", cfg.CaddyAdminAddr)
 	}
+	if vmManager != nil {
+		if err := vmManager.ReconcileVMRoutes(ctx, proxyMgr.RemoveRoute); err != nil {
+			logger.Warn("failed to reconcile stale VM routes", "error", err)
+		}
+	}
 
 	userStore := &app.DBUserStore{DB: database}
 	vmStore := &app.DBVMStore{DB: database}

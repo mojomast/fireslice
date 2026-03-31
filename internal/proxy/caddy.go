@@ -164,23 +164,27 @@ func (m *Manager) RemoveRoute(ctx context.Context, vmName string) error {
 
 	m.logger.Info("removing proxy route", "hostname", hostname)
 
-	// Use Caddy's /id/ endpoint to remove by route ID
-	url := fmt.Sprintf("%s/id/%s", m.adminAPI, id)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
+	for {
+		// Use Caddy's /id/ endpoint to remove by route ID. Repeat until the
+		// route no longer exists so stale duplicate entries are fully cleared.
+		url := fmt.Sprintf("%s/id/%s", m.adminAPI, id)
+		req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
 
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("caddy API request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
+		resp, err := m.client.Do(req)
+		if err != nil {
+			return fmt.Errorf("caddy API request: %w", err)
+		}
 		respBody, _ := io.ReadAll(resp.Body)
-		m.logger.Warn("caddy route removal failed (may not exist)",
-			"id", id, "status", resp.StatusCode, "body", string(respBody))
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			m.logger.Warn("caddy route removal failed (may not exist)",
+				"id", id, "status", resp.StatusCode, "body", string(respBody))
+			break
+		}
 	}
 
 	delete(m.routes, vmName)

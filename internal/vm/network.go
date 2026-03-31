@@ -9,6 +9,7 @@ import (
 	"net"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -191,21 +192,20 @@ func (nm *NetworkManager) AllocateNetwork(vmID string) (*NetworkConfig, error) {
 		return nil, fmt.Errorf("create tap device: %w", err)
 	}
 
-	// Attach TAP to bridge
-	if err := runCmd("ip", "link", "set", tapName, "master", nm.bridge); err != nil {
-		// Cleanup on failure
-		runCmd("ip", "link", "del", tapName)
-		return nil, fmt.Errorf("attach tap to bridge: %w", err)
-	}
-
-	// Bring TAP up
+	// Bring TAP up.
 	if err := runCmd("ip", "link", "set", tapName, "up"); err != nil {
 		runCmd("ip", "link", "del", tapName)
 		return nil, fmt.Errorf("bring up tap: %w", err)
 	}
 
-	nm.allocated[vmID] = ip.String()
+	// Route this guest directly via its TAP device. Keeping only a per-guest
+	// /32 route avoids conflicting with the bridge's broader 10.0.0.0/24 route.
+	if err := runCmd("ip", "route", "replace", fmt.Sprintf("%s/32", ip.String()), "dev", tapName); err != nil {
+		runCmd("ip", "link", "del", tapName)
+		return nil, fmt.Errorf("install guest route: %w", err)
+	}
 
+	nm.allocated[vmID] = ip.String()
 	ones, _ := nm.subnet.Mask.Size()
 
 	config := &NetworkConfig{
@@ -230,6 +230,12 @@ func (nm *NetworkManager) AllocateNetwork(vmID string) (*NetworkConfig, error) {
 func (nm *NetworkManager) ReleaseNetwork(vmID, tapDevice string) error {
 	nm.mu.Lock()
 	defer nm.mu.Unlock()
+	guestIP := nm.allocated[vmID]
+	if guestIP != "" {
+		if err := runCmd("ip", "route", "del", fmt.Sprintf("%s/32", guestIP), "dev", tapDevice); err != nil {
+			nm.logger.Warn("failed to delete guest route", "vm", vmID, "tap", tapDevice, "ip", guestIP, "error", err)
+		}
+	}
 
 	if tapDevice != "" {
 		if err := runCmd("ip", "link", "del", tapDevice); err != nil {
@@ -239,6 +245,32 @@ func (nm *NetworkManager) ReleaseNetwork(vmID, tapDevice string) error {
 
 	delete(nm.allocated, vmID)
 	nm.logger.Info("released network", "vm", vmID)
+	return nil
+}
+
+// CleanupOrphanedTapDevices removes tap-* interfaces that are no longer
+// associated with any live or persisted running VM.
+func (nm *NetworkManager) CleanupOrphanedTapDevices(active map[string]struct{}) error {
+	if active == nil {
+		active = map[string]struct{}{}
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return fmt.Errorf("list interfaces: %w", err)
+	}
+	for _, iface := range ifaces {
+		if !strings.HasPrefix(iface.Name, "tap-") {
+			continue
+		}
+		if _, ok := active[iface.Name]; ok {
+			continue
+		}
+		if err := runCmd("ip", "link", "del", iface.Name); err != nil {
+			nm.logger.Warn("failed to delete orphaned tap device", "tap", iface.Name, "error", err)
+			continue
+		}
+		nm.logger.Info("deleted orphaned tap device", "tap", iface.Name)
+	}
 	return nil
 }
 
@@ -253,7 +285,7 @@ func generateMAC() string {
 }
 
 // runCmd runs a command and returns an error if it fails.
-func runCmd(name string, args ...string) error {
+var runCmd = func(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s %v: %s: %w", name, args, string(out), err)

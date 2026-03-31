@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -74,8 +73,10 @@ func main() {
 	}
 	logf("loaded config for %s", cfg.VMName)
 	_ = writeStage("config-loaded")
+	// Network setup is best-effort for now; boot should still proceed so the
+	// guest workload can start and we can observe userspace readiness truthfully.
 	if err := configureInterface("lo", net.IPv4(127, 0, 0, 1), net.CIDRMask(8, 32), nil); err != nil {
-		fatal(err)
+		logf("loopback setup failed: %v", err)
 	}
 	bits, err := strconv.Atoi(cfg.SubnetBits)
 	if err != nil {
@@ -91,9 +92,10 @@ func main() {
 		fatal(fmt.Errorf("invalid gateway ip %q", cfg.GatewayIP))
 	}
 	if err := configureInterface("eth0", guestIP, mask, gateway); err != nil {
-		fatal(err)
+		logf("eth0 setup failed: %v", err)
+	} else {
+		logf("configured eth0 %s/%d via %s", cfg.GuestIP, bits, cfg.GatewayIP)
 	}
-	logf("configured eth0 %s/%d via %s", cfg.GuestIP, bits, cfg.GatewayIP)
 	_ = writeStage("network-ready")
 	if err := os.MkdirAll("/run/fireslice", 0755); err != nil {
 		fatal(err)
@@ -110,7 +112,7 @@ func main() {
 	if len(cfg.Command) == 0 {
 		cfg.Command = []string{"/bin/sh"}
 	}
-	argv0, err := exec.LookPath(cfg.Command[0])
+	argv0, err := lookPathWithEnv(cfg.Command[0], append(os.Environ(), cfg.Env...))
 	if err != nil {
 		fatal(err)
 	}
@@ -241,4 +243,24 @@ func writeStage(stage string) error {
 	}
 	syscall.Sync()
 	return nil
+}
+
+func lookPathWithEnv(file string, env []string) (string, error) {
+	if strings.Contains(file, "/") {
+		return file, nil
+	}
+	pathValue := "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			pathValue = strings.TrimPrefix(kv, "PATH=")
+			break
+		}
+	}
+	for _, dir := range strings.Split(pathValue, ":") {
+		candidate := dir + "/" + file
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("exec: %q: executable file not found in $PATH", file)
 }

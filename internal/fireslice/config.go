@@ -39,7 +39,7 @@ func DefaultConfig() *Config {
 		MetadataAddr:    envOrDefault("FIRESLICE_METADATA_ADDR", ":8083"),
 		FirecrackerBin:  envOrDefault("FIRESLICE_FIRECRACKER_BIN", "firecracker"),
 		KernelPath:      envOrDefault("FIRESLICE_KERNEL", filepath.Join(dataDir, "vmlinux")),
-		InitrdPath:      envWithFallback("FIRESLICE_INITRD", filepath.Join(dataDir, "initrd.img")),
+		InitrdPath:      envWithFallback("FIRESLICE_INITRD", ""),
 		NetworkBridge:   envOrDefault("FIRESLICE_BRIDGE", "ussy0"),
 		NetworkSubnet:   envOrDefault("FIRESLICE_SUBNET", "10.0.0.0/24"),
 		AdminUsername:   envOrDefault("FIRESLICE_ADMIN_USER", "admin"),
