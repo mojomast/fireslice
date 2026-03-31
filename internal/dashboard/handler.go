@@ -55,6 +55,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /", protected)
 	mux.Handle("GET /users", protected)
 	mux.Handle("GET /users/{id}", protected)
+	mux.Handle("GET /vms/{id}", protected)
 	mux.Handle("GET /vms/new", protected)
 	mux.Handle("GET /images", protected)
 	mux.Handle("GET /settings", protected)
@@ -115,6 +116,8 @@ func (h *Handler) routeProtected(w http.ResponseWriter, r *http.Request) {
 		h.renderUserDetail(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/vms/new":
 		h.renderVMNew(w, r, principal, "")
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/vms/"):
+		h.renderVMDetail(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/images":
 		h.renderImages(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/settings":
@@ -166,6 +169,62 @@ func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, principal 
 		}
 	}
 	_ = h.templates.ExecuteTemplate(w, "index.html", data)
+}
+
+func (h *Handler) renderVMDetail(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal, errMsg string) {
+	id := vmIDFromPath(r.URL.Path, "")
+	if id == 0 || !h.canManageVM(r.Context(), id, principal) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	vm, err := h.service.VMs.GetVM(r.Context(), id)
+	if err != nil {
+		h.renderError(w, err.Error())
+		return
+	}
+	owner := principal.Username
+	if user, err := h.service.Users.GetUser(r.Context(), vm.UserID); err == nil {
+		owner = user.Handle
+	}
+	domain := h.config["domain"]
+	if domain == "" {
+		domain = "slice.ussyco.de"
+	}
+	publicURL := ""
+	if vm.Subdomain.Valid {
+		publicURL = "https://" + vm.Subdomain.String + "." + domain
+	}
+	sshTarget := ""
+	if vm.IPAddress.Valid {
+		sshTarget = "ssh ussycode@" + vm.IPAddress.String
+	}
+	stateHint := "The VM record exists, but it is not running yet. Start it before trying to connect."
+	if vm.Status == "running" {
+		stateHint = "The VM is running. If the public URL returns 502, the guest service is not reachable on the exposed port yet."
+	}
+	_ = h.templates.ExecuteTemplate(w, "vm_detail.html", map[string]any{
+		"VM": map[string]any{
+			"id":             vm.ID,
+			"name":           vm.Name,
+			"owner":          owner,
+			"status":         vm.Status,
+			"image":          vm.Image,
+			"vcpu":           vm.VCPU,
+			"memory_mb":      vm.MemoryMB,
+			"disk_gb":        vm.DiskGB,
+			"ip_address":     vm.IPAddress.String,
+			"subdomain":      vm.Subdomain.String,
+			"exposed_port":   vm.ExposedPort,
+			"public_url":     publicURL,
+			"ssh_target":     sshTarget,
+			"created_at":     vm.CreatedAt.Time.Format("2006-01-02 15:04"),
+			"state_hint":     stateHint,
+			"expose_enabled": vm.ExposeSubdomain,
+		},
+		"Error":     errMsg,
+		"Principal": principal,
+		"IsAdmin":   principal.Role == "admin",
+	})
 }
 
 func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal, errMsg string) {
@@ -230,7 +289,7 @@ func (h *Handler) renderUserDetail(w http.ResponseWriter, r *http.Request, princ
 		totalCPU += vm.VCPU
 		totalRAMMB += vm.MemoryMB
 		totalDiskMB += vm.DiskGB * 1024
-		vmRows = append(vmRows, map[string]any{"name": vm.Name, "status": vm.Status, "subdomain": vm.Subdomain.String})
+		vmRows = append(vmRows, map[string]any{"id": vm.ID, "name": vm.Name, "status": vm.Status, "subdomain": vm.Subdomain.String})
 	}
 	_ = h.templates.ExecuteTemplate(w, "user_detail.html", map[string]any{"User": map[string]any{"id": user.ID, "handle": user.Handle, "email": user.Email, "role": user.Role, "trust_level": user.TrustLevel, "vm_limit": user.VMLimit, "cpu_limit": user.CPULimit, "ram_limit_mb": user.RAMLimitMB, "disk_limit_mb": user.DiskLimitMB, "vm_count": len(vms), "cpu_used": totalCPU, "ram_used_mb": totalRAMMB, "disk_used_mb": totalDiskMB, "keys": keyRows}, "VMs": vmRows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin", "Self": principal.UserID == user.ID})
 }

@@ -82,12 +82,12 @@
   <div class="card">
     <h2>VMs</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Status</th><th>Subdomain</th></tr></thead>
+      <thead><tr><th>Name</th><th>Status</th><th>Subdomain</th><th>Guide</th></tr></thead>
       <tbody>
         {{range .VMs}}
-        <tr><td>{{index . "name"}}</td><td>{{index . "status"}}</td><td>{{index . "subdomain"}}</td></tr>
+        <tr><td>{{index . "name"}}</td><td>{{index . "status"}}</td><td>{{index . "subdomain"}}</td><td><a href="/vms/{{index . "id"}}">Open details</a></td></tr>
         {{else}}
-        <tr><td colspan="3" class="muted">No VMs.</td></tr>
+        <tr><td colspan="4" class="muted">No VMs.</td></tr>
         {{end}}
       </tbody>
     </table></div>

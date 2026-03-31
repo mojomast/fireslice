@@ -65,7 +65,7 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 			CreatedAt:  db.SQLiteTime{Time: time.Now()},
 			UpdatedAt:  db.SQLiteTime{Time: time.Now()},
 		}}},
-		VMs:    &dashboardStubVMs{},
+		VMs:    &dashboardStubVMs{vms: map[int64]*db.VM{11: {ID: 11, UserID: 7, Name: "hello1", Status: "running", Image: "ubuntu:24.04", VCPU: 1, MemoryMB: 512, DiskGB: 5, IPAddress: sql.NullString{String: "10.0.0.2", Valid: true}, Subdomain: sql.NullString{String: "hello1", Valid: true}, ExposedPort: 8081, CreatedAt: db.SQLiteTime{Time: time.Now()}, UpdatedAt: db.SQLiteTime{Time: time.Now()}}}},
 		Images: dashboardStubImages{images: []fireslice.ImageCatalogEntry{{Name: "Ubuntu 24.04", Ref: "ubuntu:24.04", Description: "Default image"}}},
 	}, auth, map[string]string{"domain": "example.test"})
 	if err != nil {
@@ -134,6 +134,26 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 			t.Fatalf("vm new page missing image option: %s", body)
 		}
 	})
+
+	t.Run("vm details page shows access instructions", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/vms/11", nil)
+		req.AddCookie(cookies[0])
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "How to use this slice") {
+			t.Fatalf("vm detail body missing instructions heading: %s", body)
+		}
+		if !strings.Contains(body, "https://hello1.example.test") {
+			t.Fatalf("vm detail body missing public URL: %s", body)
+		}
+		if !strings.Contains(body, "ssh ussycode@10.0.0.2") {
+			t.Fatalf("vm detail body missing ssh target: %s", body)
+		}
+	})
 }
 
 type dashboardUserLookup struct {
@@ -182,7 +202,7 @@ func (s *dashboardStubUsers) ListSSHKeys(context.Context, int64) ([]*db.SSHKey, 
 	return []*db.SSHKey{}, nil
 }
 
-type dashboardStubVMs struct{}
+type dashboardStubVMs struct{ vms map[int64]*db.VM }
 
 type dashboardStubImages struct{ images []fireslice.ImageCatalogEntry }
 
@@ -195,10 +215,25 @@ func (s dashboardStubImages) DeleteImage(context.Context, string) error         
 func (s *dashboardStubVMs) CreateVMRecord(context.Context, fireslice.CreateVMInput) (*db.VM, error) {
 	return nil, nil
 }
-func (s *dashboardStubVMs) GetVM(context.Context, int64) (*db.VM, error) { return nil, nil }
-func (s *dashboardStubVMs) ListVMs(context.Context) ([]*db.VM, error)    { return []*db.VM{}, nil }
-func (s *dashboardStubVMs) ListVMsByUser(context.Context, int64) ([]*db.VM, error) {
-	return []*db.VM{}, nil
+func (s *dashboardStubVMs) GetVM(_ context.Context, id int64) (*db.VM, error) {
+	if vm, ok := s.vms[id]; ok {
+		copy := *vm
+		return &copy, nil
+	}
+	return nil, sql.ErrNoRows
+}
+func (s *dashboardStubVMs) ListVMs(context.Context) ([]*db.VM, error) { return []*db.VM{}, nil }
+
+func (s *dashboardStubVMs) ListVMsByUser(_ context.Context, userID int64) ([]*db.VM, error) {
+	items := []*db.VM{}
+	for _, vm := range s.vms {
+		if vm.UserID != userID {
+			continue
+		}
+		copy := *vm
+		items = append(items, &copy)
+	}
+	return items, nil
 }
 func (s *dashboardStubVMs) UpdateVMStatus(context.Context, int64, string) error { return nil }
 func (s *dashboardStubVMs) UpdateVMExposure(context.Context, int64, bool, string, int) error {

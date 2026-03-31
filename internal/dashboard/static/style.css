@@ -82,6 +82,11 @@ code {
   color: white;
   font-weight: 700;
 }
+.button-link.small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 14px;
+}
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice VM details</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  {{template "nav" .}}
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+  <section class="hero compact">
+    <div>
+      <p class="eyebrow">Slice details</p>
+      <h1>{{index .VM "name"}}</h1>
+      <p class="muted">How to access and use this slice.</p>
+    </div>
+  </section>
+
+  <section class="metrics-grid">
+    <div class="metric-card"><span>Status</span><strong>{{index .VM "status"}}</strong></div>
+    <div class="metric-card"><span>Owner</span><strong>{{index .VM "owner"}}</strong></div>
+    <div class="metric-card"><span>Shape</span><strong>{{index .VM "vcpu"}} vCPU / {{index .VM "memory_mb"}} MB</strong></div>
+    <div class="metric-card"><span>Disk</span><strong>{{index .VM "disk_gb"}} GB</strong></div>
+  </section>
+
+  <div class="card">
+    <h2>Connection details</h2>
+    <p><strong>Image:</strong> <code>{{index .VM "image"}}</code></p>
+    <p><strong>Private IP:</strong> <code>{{index .VM "ip_address"}}</code></p>
+    <p><strong>Exposed port:</strong> <code>{{index .VM "exposed_port"}}</code></p>
+    <p><strong>Created:</strong> {{index .VM "created_at"}}</p>
+    {{if index .VM "public_url"}}<p><strong>Public URL:</strong> <a href="{{index .VM "public_url"}}">{{index .VM "public_url"}}</a></p>{{end}}
+    {{if index .VM "ssh_target"}}<p><strong>SSH:</strong> <code>{{index .VM "ssh_target"}}</code></p>{{end}}
+  </div>
+
+  <div class="card">
+    <h2>How to use this slice</h2>
+    <p>{{index .VM "state_hint"}}</p>
+    <ol>
+      <li>Use the public URL if the slice is exposed and your app is listening on the exposed port.</li>
+      <li>Use SSH if you need shell access and have added your SSH key to your account.</li>
+      <li>Inside the slice, bind web apps to <code>0.0.0.0</code>, not <code>127.0.0.1</code>.</li>
+      <li>If the public URL returns <code>502</code>, the guest service is not reachable on <code>{{index .VM "exposed_port"}}</code> yet.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Common troubleshooting</h2>
+    <ul>
+      <li><strong>404:</strong> the slice is not currently exposed on a public subdomain.</li>
+      <li><strong>502:</strong> the proxy route exists, but the app inside the slice is not reachable.</li>
+      <li><strong>Stopped:</strong> start the slice from the dashboard before trying to use it.</li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

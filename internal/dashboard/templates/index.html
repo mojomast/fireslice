@@ -34,6 +34,7 @@
         <td>{{index . "created_at"}}</td>
         <td>
           <div class="row-actions">
+            <a class="button-link small" href="/vms/{{index . "id"}}">Details</a>
             <form method="post" action="/vms/{{index . "id"}}/start"><button type="submit">Start</button></form>
             <form method="post" action="/vms/{{index . "id"}}/stop"><button type="submit">Stop</button></form>
             <form method="post" action="/vms/{{index . "id"}}/delete"><button type="submit">Destroy</button></form>
