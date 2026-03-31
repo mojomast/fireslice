@@ -204,3 +204,18 @@ func TestFirecrackerStayedRunningReturnsFalseForNil(t *testing.T) {
 		t.Fatal("firecrackerStayedRunning(nil) = true, want false")
 	}
 }
+
+func TestGuestInitReadyPatternMatchesInjectedInitLogs(t *testing.T) {
+	t.Parallel()
+
+	for _, line := range []string{
+		"fireslice-guest-init: guest init starting",
+		"fireslice-guest-init: loaded config for probe-1",
+		"fireslice-guest-init: configured eth0 10.0.0.2/24 via 10.0.0.1",
+		"fireslice-guest-init: exec /bin/sh",
+	} {
+		if !guestInitReadyPattern.MatchString(line) {
+			t.Fatalf("guestInitReadyPattern did not match %q", line)
+		}
+	}
+}

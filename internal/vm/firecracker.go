@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
+	"strings"
 	"time"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -34,7 +34,7 @@ type FirecrackerVM struct {
 }
 
 // NewFirecrackerBackend creates a new Firecracker VMM backend.
-func NewFirecrackerBackend(firecrackerBin, kernelPath, dataDir string, logger *slog.Logger) (*FirecrackerBackend, error) {
+func NewFirecrackerBackend(firecrackerBin, kernelPath, initrdPath, dataDir string, logger *slog.Logger) (*FirecrackerBackend, error) {
 	// Verify firecracker binary exists
 	if _, err := exec.LookPath(firecrackerBin); err != nil {
 		// Check common locations
@@ -61,7 +61,9 @@ func NewFirecrackerBackend(firecrackerBin, kernelPath, dataDir string, logger *s
 		return nil, fmt.Errorf("kernel not found at %s: %w", kernelPath, err)
 	}
 
-	initrdPath := filepath.Join(dataDir, "initrd.img")
+	if initrdPath == "" {
+		initrdPath = filepath.Join(dataDir, "initrd.img")
+	}
 	if _, err := os.Stat(initrdPath); err != nil {
 		fallbacks := []string{
 			"/boot/initrd.img-6.12.74+deb13+1-cloud-amd64",
@@ -107,16 +109,10 @@ func (fb *FirecrackerBackend) StartVM(ctx context.Context, opts *VMStartOptions)
 	// Remove stale socket if it exists
 	os.Remove(socketPath)
 
-	// Build kernel boot args
-	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/lib/systemd/systemd systemd.unit=multi-user.target"
-	if opts.NetworkConfig != nil {
-		// Configure static IP via kernel boot args
-		bootArgs += fmt.Sprintf(" ip=%s::%s:%s::eth0:off",
-			opts.NetworkConfig.GuestIP,
-			opts.NetworkConfig.GatewayIP,
-			cidrMaskToNetmask(opts.NetworkConfig.SubnetMask),
-		)
-	}
+	// Build kernel boot args.
+	// The guest rootfs is container-derived, so we boot through an injected PID 1
+	// instead of assuming systemd or kernel ip= handling inside the guest image.
+	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/usr/local/bin/fireslice-guest-init"
 
 	// Create firecracker config
 	fcCfg := firecracker.Config{
@@ -263,12 +259,23 @@ func (vm *FirecrackerVM) IsRunning() bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	// Send signal 0 to check if process exists
-	proc, err := os.FindProcess(pid)
+	state, err := processState(pid)
 	if err != nil {
 		return false
 	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	return state != "Z" && state != "X"
+}
+
+func processState(pid int) (string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Fields(string(data))
+	if len(parts) < 3 {
+		return "", fmt.Errorf("unexpected /proc stat format for pid %d", pid)
+	}
+	return parts[2], nil
 }
 
 // VMStartOptions holds configuration for starting a new VM.

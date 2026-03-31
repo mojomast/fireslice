@@ -2,11 +2,13 @@ package vm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,9 @@ const defaultDataDiskGB = 5
 
 const provisioningTimeout = 10 * time.Minute
 const firecrackerBootGracePeriod = 5 * time.Second
+const guestInitHostPath = "/usr/local/bin/fireslice-guest-init"
+
+var guestInitReadyPattern = regexp.MustCompile(`fireslice-guest-init: (guest init starting|loaded config|configured eth0|exec )`)
 
 func provisioningContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), provisioningTimeout)
@@ -87,6 +92,7 @@ type ManagerConfig struct {
 	DataDir        string // base dir for all VM data
 	FirecrackerBin string
 	KernelPath     string
+	InitrdPath     string
 	BridgeName     string
 	SubnetCIDR     string
 }
@@ -124,6 +130,7 @@ func NewManager(database *db.DB, cfg *ManagerConfig, logger *slog.Logger) (*Mana
 	fc, err := NewFirecrackerBackend(
 		cfg.FirecrackerBin,
 		cfg.KernelPath,
+		cfg.InitrdPath,
 		cfg.DataDir,
 		logger.With("component", "firecracker"),
 	)
@@ -264,14 +271,19 @@ func (m *Manager) installGuestRuntime(ctx context.Context, rootfs string, cfg cr
 	if err := mkdirExt4(ctx, rootfs, "/usr/local/bin"); err != nil {
 		return err
 	}
-	if err := mkdirExt4(ctx, rootfs, "/etc/systemd/system"); err != nil {
-		return err
-	}
-	if err := mkdirExt4(ctx, rootfs, "/etc/systemd/system/multi-user.target.wants"); err != nil {
+	if err := mkdirExt4(ctx, rootfs, "/etc"); err != nil {
 		return err
 	}
 
-	command := guestCommand(imgCfg)
+	guestInit, err := os.ReadFile(guestInitHostPath)
+	if err != nil {
+		return fmt.Errorf("read guest init binary: %w", err)
+	}
+	if err := writeExt4Bytes(ctx, rootfs, "/usr/local/bin/fireslice-guest-init", guestInit, 0, 0, "0100755"); err != nil {
+		return err
+	}
+
+	command := guestCommandParts(imgCfg)
 	workingDir := imgCfg.WorkingDir
 	if workingDir == "" {
 		workingDir = "/"
@@ -286,56 +298,44 @@ func (m *Manager) installGuestRuntime(ctx context.Context, rootfs string, cfg cr
 	for k, v := range cfg.Env {
 		envLines = append(envLines, fmt.Sprintf("%s=%s", k, v))
 	}
-
-	script := fmt.Sprintf(`#!/bin/sh
-set -eu
-mkdir -p /run/fireslice
-echo boot > /run/fireslice/state
-cd %s
-export %s
-exec %s
-`, shellQuote(workingDir), strings.Join(envLines, "\nexport "), command)
-	service := `[Unit]
-Description=Fireslice guest workload
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/
-ExecStart=/usr/local/bin/fireslice-start
-Restart=always
-RestartSec=2
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=multi-user.target
-`
-	if err := writeExt4File(ctx, rootfs, "/usr/local/bin/fireslice-start", script, 0, 0, "0100755"); err != nil {
-		return err
+	runtimeCfg := guestRuntimeConfig{
+		VMName:     cfg.Name,
+		WorkingDir: workingDir,
+		Command:    command,
+		Env:        envLines,
+		GuestIP:    cfg.NetworkConfig.GuestIP,
+		GatewayIP:  cfg.NetworkConfig.GatewayIP,
+		SubnetBits: cfg.NetworkConfig.SubnetMask,
+		MacAddress: cfg.NetworkConfig.MacAddress,
 	}
-	if err := writeExt4File(ctx, rootfs, "/etc/systemd/system/fireslice-app.service", service, 0, 0, "0100644"); err != nil {
-		return err
+	configData, err := json.Marshal(runtimeCfg)
+	if err != nil {
+		return fmt.Errorf("marshal guest runtime config: %w", err)
 	}
-	if err := symlinkExt4(ctx, rootfs, "/etc/systemd/system/fireslice-app.service", "/etc/systemd/system/multi-user.target.wants/fireslice-app.service"); err != nil {
+	if err := writeExt4Bytes(ctx, rootfs, "/etc/fireslice-init.json", configData, 0, 0, "0100644"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func guestCommand(imgCfg *ImageConfig) string {
+type guestRuntimeConfig struct {
+	VMName     string   `json:"vm_name"`
+	WorkingDir string   `json:"working_dir"`
+	Command    []string `json:"command"`
+	Env        []string `json:"env"`
+	GuestIP    string   `json:"guest_ip"`
+	GatewayIP  string   `json:"gateway_ip"`
+	SubnetBits string   `json:"subnet_bits"`
+	MacAddress string   `json:"mac_address"`
+}
+
+func guestCommandParts(imgCfg *ImageConfig) []string {
 	parts := append([]string{}, imgCfg.Entrypoint...)
 	parts = append(parts, imgCfg.Cmd...)
 	if len(parts) == 0 {
-		return "/bin/bash"
+		return []string{"/bin/sh"}
 	}
-	quoted := make([]string, 0, len(parts))
-	for _, part := range parts {
-		quoted = append(quoted, shellQuote(part))
-	}
-	return strings.Join(quoted, " ")
+	return parts
 }
 
 func shellQuote(s string) string {
@@ -408,12 +408,16 @@ func rewriteExt4FileIfExists(ctx context.Context, rootfs, guestPath string, uid,
 }
 
 func writeExt4File(ctx context.Context, rootfs, guestPath, content string, uid, gid int, mode string) error {
+	return writeExt4Bytes(ctx, rootfs, guestPath, []byte(content), uid, gid, mode)
+}
+
+func writeExt4Bytes(ctx context.Context, rootfs, guestPath string, content []byte, uid, gid int, mode string) error {
 	tmpFile, err := os.CreateTemp("", "ussycode-ext4-write-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.WriteString(content); err != nil {
+	if _, err := tmpFile.Write(content); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return err
@@ -514,18 +518,28 @@ func (m *Manager) CreateAndStartWithOptions(ctx context.Context, opts CreateOpti
 		return err
 	}
 
-	return m.createAndStart(ctx, createStartConfig(opts))
+	return m.createAndStart(ctx, createStartConfig{
+		VMID:       opts.VMID,
+		Name:       opts.Name,
+		ImageRef:   opts.ImageRef,
+		VCPU:       opts.VCPU,
+		MemoryMB:   opts.MemoryMB,
+		DataDiskGB: opts.DataDiskGB,
+		SSHKeys:    opts.SSHKeys,
+		Env:        opts.Env,
+	})
 }
 
 type createStartConfig struct {
-	VMID       int64
-	Name       string
-	ImageRef   string
-	VCPU       int
-	MemoryMB   int
-	DataDiskGB int
-	SSHKeys    []string
-	Env        map[string]string
+	VMID          int64
+	Name          string
+	ImageRef      string
+	VCPU          int
+	MemoryMB      int
+	DataDiskGB    int
+	SSHKeys       []string
+	Env           map[string]string
+	NetworkConfig *NetworkConfig
 }
 
 func validateCreateOptions(opts CreateOptions) error {
@@ -612,11 +626,6 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("seed authorized keys: %w", err)
 	}
-	if err := m.installGuestRuntime(provisionCtx, vmRootfs, cfg, imgCfg); err != nil {
-		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
-		return fmt.Errorf("install guest runtime: %w", err)
-	}
-
 	// 3. Create a persistent data disk for the user
 	dataDiskPath, err := m.createDataDisk(provisionCtx, cfg.VMID, cfg.DataDiskGB)
 	if err != nil {
@@ -634,6 +643,12 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	if err != nil {
 		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("allocate network: %w", err)
+	}
+	cfg.NetworkConfig = netCfg
+	if err := m.installGuestRuntime(provisionCtx, vmRootfs, cfg, imgCfg); err != nil {
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("install guest runtime: %w", err)
 	}
 
 	// 5. Boot the VM
@@ -665,6 +680,17 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("firecracker exited during guest boot")
+	}
+	ready, err := waitForGuestInit(fcVM, firecrackerBootGracePeriod)
+	if err != nil {
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("wait for guest init: %w", err)
+	}
+	if !ready {
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("guest init did not become ready")
 	}
 	if err := m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "running",
 		&netCfg.TapDevice,
@@ -724,6 +750,34 @@ func firecrackerStayedRunning(fcVM *FirecrackerVM, grace time.Duration) bool {
 	}
 	time.Sleep(grace)
 	return fcVM.IsRunning()
+}
+
+func waitForGuestInit(fcVM *FirecrackerVM, timeout time.Duration) (bool, error) {
+	if fcVM == nil {
+		return false, nil
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(fcVM.logPath)
+		if err == nil && guestInitReadyPattern.Match(data) {
+			return true, nil
+		}
+		if !fcVM.IsRunning() {
+			if err != nil && !os.IsNotExist(err) {
+				return false, err
+			}
+			return false, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	data, err := os.ReadFile(fcVM.logPath)
+	if err == nil && guestInitReadyPattern.Match(data) {
+		return true, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	return false, nil
 }
 
 // Start boots an existing stopped VM that already has disk images.

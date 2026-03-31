@@ -19,6 +19,7 @@ type Config struct {
 	MetadataAddr    string
 	FirecrackerBin  string
 	KernelPath      string
+	InitrdPath      string
 	NetworkBridge   string
 	NetworkSubnet   string
 	AdminUsername   string
@@ -38,6 +39,7 @@ func DefaultConfig() *Config {
 		MetadataAddr:    envOrDefault("FIRESLICE_METADATA_ADDR", ":8083"),
 		FirecrackerBin:  envOrDefault("FIRESLICE_FIRECRACKER_BIN", "firecracker"),
 		KernelPath:      envOrDefault("FIRESLICE_KERNEL", filepath.Join(dataDir, "vmlinux")),
+		InitrdPath:      envOrDefault("FIRESLICE_INITRD", filepath.Join(dataDir, "initrd.img")),
 		NetworkBridge:   envOrDefault("FIRESLICE_BRIDGE", "ussy0"),
 		NetworkSubnet:   envOrDefault("FIRESLICE_SUBNET", "10.0.0.0/24"),
 		AdminUsername:   envOrDefault("FIRESLICE_ADMIN_USER", "admin"),
@@ -55,6 +57,7 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.MetadataAddr, "metadata-addr", c.MetadataAddr, "Metadata service listen address")
 	fs.StringVar(&c.FirecrackerBin, "firecracker", c.FirecrackerBin, "Path to firecracker binary")
 	fs.StringVar(&c.KernelPath, "kernel", c.KernelPath, "Path to guest kernel")
+	fs.StringVar(&c.InitrdPath, "initrd", c.InitrdPath, "Path to guest initrd")
 	fs.StringVar(&c.NetworkBridge, "bridge", c.NetworkBridge, "Bridge interface for VM networking")
 	fs.StringVar(&c.NetworkSubnet, "subnet", c.NetworkSubnet, "CIDR subnet for VM IPs")
 	fs.StringVar(&c.AdminUsername, "admin-user", c.AdminUsername, "Admin username for dashboard login")

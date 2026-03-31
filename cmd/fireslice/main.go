@@ -55,6 +55,7 @@ func main() {
 		DataDir:        cfg.DataDir,
 		FirecrackerBin: cfg.FirecrackerBin,
 		KernelPath:     cfg.KernelPath,
+		InitrdPath:     cfg.InitrdPath,
 		BridgeName:     cfg.NetworkBridge,
 		SubnetCIDR:     cfg.NetworkSubnet,
 	}, logger.With("component", "vm"))
