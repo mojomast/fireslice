@@ -235,6 +235,88 @@ func (m *Manager) configureGuestSSH(ctx context.Context, rootfs string) error {
 	return nil
 }
 
+func (m *Manager) installGuestRuntime(ctx context.Context, rootfs string, cfg createStartConfig, imgCfg *ImageConfig) error {
+	if err := mkdirExt4(ctx, rootfs, "/usr/local/bin"); err != nil {
+		return err
+	}
+	if err := mkdirExt4(ctx, rootfs, "/etc/systemd/system"); err != nil {
+		return err
+	}
+	if err := mkdirExt4(ctx, rootfs, "/etc/systemd/system/multi-user.target.wants"); err != nil {
+		return err
+	}
+
+	command := guestCommand(imgCfg)
+	workingDir := imgCfg.WorkingDir
+	if workingDir == "" {
+		workingDir = "/"
+	}
+	envLines := []string{
+		"HOME=/home/ussycode",
+		fmt.Sprintf("FIRESLICE_VM_NAME=%s", cfg.Name),
+		"FIRESLICE_PUBLIC_DOMAIN=slice.ussyco.de",
+		fmt.Sprintf("FIRESLICE_EXPOSED_PORT=%d", 8080),
+	}
+	envLines = append(envLines, imgCfg.Env...)
+	for k, v := range cfg.Env {
+		envLines = append(envLines, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+mkdir -p /run/fireslice
+echo boot > /run/fireslice/state
+cd %s
+export %s
+exec %s
+`, shellQuote(workingDir), strings.Join(envLines, "\nexport "), command)
+	service := `[Unit]
+Description=Fireslice guest workload
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/
+ExecStart=/usr/local/bin/fireslice-start
+Restart=always
+RestartSec=2
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
+`
+	if err := writeExt4File(ctx, rootfs, "/usr/local/bin/fireslice-start", script, 0, 0, "0100755"); err != nil {
+		return err
+	}
+	if err := writeExt4File(ctx, rootfs, "/etc/systemd/system/fireslice-app.service", service, 0, 0, "0100644"); err != nil {
+		return err
+	}
+	if err := symlinkExt4(ctx, rootfs, "/etc/systemd/system/fireslice-app.service", "/etc/systemd/system/multi-user.target.wants/fireslice-app.service"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func guestCommand(imgCfg *ImageConfig) string {
+	parts := append([]string{}, imgCfg.Entrypoint...)
+	parts = append(parts, imgCfg.Cmd...)
+	if len(parts) == 0 {
+		return "/bin/bash"
+	}
+	quoted := make([]string, 0, len(parts))
+	for _, part := range parts {
+		quoted = append(quoted, shellQuote(part))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
 func (m *Manager) installOpencodeRuntimeFiles(ctx context.Context, rootfs string) error {
 	base := filepath.Join("home", "ussycode", ".config", "opencode")
 	if err := mkdirExt4(ctx, rootfs, "/home/ussycode/.config"); err != nil {
@@ -294,6 +376,21 @@ func writeExt4File(ctx context.Context, rootfs, guestPath, content string, uid, 
 		fmt.Sprintf("set_inode_field %s uid %d", guestPath, uid),
 		fmt.Sprintf("set_inode_field %s gid %d", guestPath, gid),
 		fmt.Sprintf("set_inode_field %s mode %s", guestPath, mode),
+	}
+	for _, cmdText := range commands {
+		cmd := exec.CommandContext(ctx, "debugfs", "-w", "-R", cmdText, rootfs)
+		out, err := cmd.CombinedOutput()
+		if err != nil && !(strings.HasPrefix(cmdText, "rm ") && strings.Contains(string(out), "File not found")) {
+			return fmt.Errorf("debugfs %q: %s: %w", cmdText, string(out), err)
+		}
+	}
+	return nil
+}
+
+func symlinkExt4(ctx context.Context, rootfs, target, linkPath string) error {
+	commands := []string{
+		fmt.Sprintf("rm %s", linkPath),
+		fmt.Sprintf("symlink %s %s", linkPath, target),
 	}
 	for _, cmdText := range commands {
 		cmd := exec.CommandContext(ctx, "debugfs", "-w", "-R", cmdText, rootfs)
@@ -460,6 +557,10 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	if err := m.SeedAuthorizedKeys(ctx, cfg.VMID, cfg.SSHKeys); err != nil {
 		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("seed authorized keys: %w", err)
+	}
+	if err := m.installGuestRuntime(ctx, vmRootfs, cfg, imgCfg); err != nil {
+		m.db.UpdateVMStatus(ctx, cfg.VMID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("install guest runtime: %w", err)
 	}
 
 	// 3. Create a persistent data disk for the user

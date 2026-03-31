@@ -108,7 +108,7 @@ func (fb *FirecrackerBackend) StartVM(ctx context.Context, opts *VMStartOptions)
 	os.Remove(socketPath)
 
 	// Build kernel boot args
-	bootArgs := "console=ttyS0 reboot=k panic=1 rootwait pci=off"
+	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/lib/systemd/systemd systemd.unit=multi-user.target"
 	if opts.NetworkConfig != nil {
 		// Configure static IP via kernel boot args
 		bootArgs += fmt.Sprintf(" ip=%s::%s:%s::eth0:off",
