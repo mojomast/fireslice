@@ -39,7 +39,7 @@ func DefaultConfig() *Config {
 		MetadataAddr:    envOrDefault("FIRESLICE_METADATA_ADDR", ":8083"),
 		FirecrackerBin:  envOrDefault("FIRESLICE_FIRECRACKER_BIN", "firecracker"),
 		KernelPath:      envOrDefault("FIRESLICE_KERNEL", filepath.Join(dataDir, "vmlinux")),
-		InitrdPath:      envOrDefault("FIRESLICE_INITRD", filepath.Join(dataDir, "initrd.img")),
+		InitrdPath:      envWithFallback("FIRESLICE_INITRD", filepath.Join(dataDir, "initrd.img")),
 		NetworkBridge:   envOrDefault("FIRESLICE_BRIDGE", "ussy0"),
 		NetworkSubnet:   envOrDefault("FIRESLICE_SUBNET", "10.0.0.0/24"),
 		AdminUsername:   envOrDefault("FIRESLICE_ADMIN_USER", "admin"),
@@ -83,6 +83,14 @@ func (c *Config) Validate() error {
 
 func envOrDefault(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+func envWithFallback(key, defaultVal string) string {
+	v, ok := os.LookupEnv(key)
+	if ok {
 		return v
 	}
 	return defaultVal

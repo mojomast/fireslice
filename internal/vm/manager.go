@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,10 +18,8 @@ import (
 const defaultDataDiskGB = 5
 
 const provisioningTimeout = 10 * time.Minute
-const firecrackerBootGracePeriod = 5 * time.Second
+const firecrackerBootGracePeriod = 20 * time.Second
 const guestInitHostPath = "/usr/local/bin/fireslice-guest-init"
-
-var guestInitReadyPattern = regexp.MustCompile(`fireslice-guest-init: (guest init starting|loaded config|configured eth0|exec )`)
 
 func provisioningContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), provisioningTimeout)
@@ -681,7 +678,7 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("firecracker exited during guest boot")
 	}
-	ready, err := waitForGuestInit(fcVM, firecrackerBootGracePeriod)
+	ready, err := waitForGuestInit(vmRootfs, fcVM, firecrackerBootGracePeriod)
 	if err != nil {
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
@@ -752,32 +749,41 @@ func firecrackerStayedRunning(fcVM *FirecrackerVM, grace time.Duration) bool {
 	return fcVM.IsRunning()
 }
 
-func waitForGuestInit(fcVM *FirecrackerVM, timeout time.Duration) (bool, error) {
+func waitForGuestInit(rootfs string, fcVM *FirecrackerVM, timeout time.Duration) (bool, error) {
 	if fcVM == nil {
 		return false, nil
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(fcVM.logPath)
-		if err == nil && guestInitReadyPattern.Match(data) {
+		stage, err := ext4ReadFile(context.Background(), rootfs, "/fireslice-stage")
+		if err == nil && (strings.Contains(stage, "network-ready") || strings.Contains(stage, "exec-ready")) {
 			return true, nil
 		}
 		if !fcVM.IsRunning() {
-			if err != nil && !os.IsNotExist(err) {
+			if err != nil && !strings.Contains(err.Error(), "File not found") {
 				return false, err
 			}
 			return false, nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	data, err := os.ReadFile(fcVM.logPath)
-	if err == nil && guestInitReadyPattern.Match(data) {
+	stage, err := ext4ReadFile(context.Background(), rootfs, "/fireslice-stage")
+	if err == nil && (strings.Contains(stage, "network-ready") || strings.Contains(stage, "exec-ready")) {
 		return true, nil
 	}
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !strings.Contains(err.Error(), "File not found") {
 		return false, err
 	}
 	return false, nil
+}
+
+func ext4ReadFile(ctx context.Context, rootfs, guestPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "debugfs", "-R", fmt.Sprintf("cat %s", guestPath), rootfs)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("debugfs cat %s: %s: %w", guestPath, string(out), err)
+	}
+	return string(out), nil
 }
 
 // Start boots an existing stopped VM that already has disk images.

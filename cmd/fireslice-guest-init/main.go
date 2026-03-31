@@ -64,6 +64,7 @@ type rtentry struct {
 
 func main() {
 	logf("guest init starting")
+	_ = writeStage("starting")
 	if err := mountSpecialFS(); err != nil {
 		fatal(err)
 	}
@@ -72,6 +73,7 @@ func main() {
 		fatal(err)
 	}
 	logf("loaded config for %s", cfg.VMName)
+	_ = writeStage("config-loaded")
 	if err := configureInterface("lo", net.IPv4(127, 0, 0, 1), net.CIDRMask(8, 32), nil); err != nil {
 		fatal(err)
 	}
@@ -92,6 +94,7 @@ func main() {
 		fatal(err)
 	}
 	logf("configured eth0 %s/%d via %s", cfg.GuestIP, bits, cfg.GatewayIP)
+	_ = writeStage("network-ready")
 	if err := os.MkdirAll("/run/fireslice", 0755); err != nil {
 		fatal(err)
 	}
@@ -112,6 +115,7 @@ func main() {
 		fatal(err)
 	}
 	logf("exec %s", argv0)
+	_ = writeStage("exec-ready")
 	env := append(os.Environ(), cfg.Env...)
 	if err := syscall.Exec(argv0, cfg.Command, env); err != nil {
 		fatal(err)
@@ -218,6 +222,7 @@ func addDefaultRoute(fd int, gateway net.IP) error {
 
 func fatal(err error) {
 	logf("fatal: %v", err)
+	_ = writeStage("fatal:" + err.Error())
 	msg := err.Error()
 	if !strings.HasSuffix(msg, "\n") {
 		msg += "\n"
@@ -228,4 +233,12 @@ func fatal(err error) {
 
 func logf(format string, args ...any) {
 	_, _ = fmt.Fprintf(os.Stderr, "fireslice-guest-init: "+format+"\n", args...)
+}
+
+func writeStage(stage string) error {
+	if err := os.WriteFile("/fireslice-stage", []byte(stage+"\n"), 0644); err != nil {
+		return err
+	}
+	syscall.Sync()
+	return nil
 }

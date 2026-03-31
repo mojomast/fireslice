@@ -112,13 +112,12 @@ func (fb *FirecrackerBackend) StartVM(ctx context.Context, opts *VMStartOptions)
 	// Build kernel boot args.
 	// The guest rootfs is container-derived, so we boot through an injected PID 1
 	// instead of assuming systemd or kernel ip= handling inside the guest image.
-	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/usr/local/bin/fireslice-guest-init"
+	bootArgs := "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rootwait rootfstype=ext4 rw init=/usr/local/bin/fireslice-guest-init"
 
 	// Create firecracker config
 	fcCfg := firecracker.Config{
 		SocketPath:      socketPath,
 		KernelImagePath: fb.kernelPath,
-		InitrdPath:      fb.initrdPath,
 		KernelArgs:      bootArgs,
 		MachineCfg: models.MachineConfiguration{
 			VcpuCount:  firecracker.Int64(int64(opts.VCPU)),
@@ -132,6 +131,9 @@ func (fb *FirecrackerBackend) StartVM(ctx context.Context, opts *VMStartOptions)
 				IsReadOnly:   firecracker.Bool(false),
 			},
 		},
+	}
+	if fb.initrdPath != "" {
+		fcCfg.InitrdPath = fb.initrdPath
 	}
 
 	// Add persistent data disk if provided
