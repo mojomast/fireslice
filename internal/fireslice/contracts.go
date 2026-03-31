@@ -27,6 +27,12 @@ type VMExposure struct {
 	ExposedPort     int
 }
 
+type ImageCatalogEntry struct {
+	Name        string
+	Ref         string
+	Description string
+}
+
 type UserStore interface {
 	CreateUser(ctx context.Context, handle, email, password, role string) (*db.User, error)
 	GetUser(ctx context.Context, id int64) (*db.User, error)
@@ -64,4 +70,10 @@ type RouteManager interface {
 
 type AuditStore interface {
 	LogAudit(ctx context.Context, action, targetType string, targetID int64, detail string) error
+}
+
+type ImageStore interface {
+	ListImages(ctx context.Context) ([]ImageCatalogEntry, error)
+	AddImage(ctx context.Context, image ImageCatalogEntry) error
+	DeleteImage(ctx context.Context, ref string) error
 }

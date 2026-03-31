@@ -9,22 +9,42 @@
 <body>
 <main>
   {{template "nav" .}}
-  <h1>Create VM</h1>
-  {{if .Quota}}<p>{{index .Quota "vm_used"}} / {{index .Quota "vm_limit"}} VMs, {{index .Quota "cpu_used"}} / {{index .Quota "cpu_limit"}} vCPU, {{index .Quota "ram_used_mb"}} / {{index .Quota "ram_limit_mb"}} MB RAM, {{index .Quota "disk_used_mb"}} / {{index .Quota "disk_limit_mb"}} MB disk</p>{{end}}
-  <form method="post" action="/vms">
+  <section class="hero compact">
+    <div>
+      <p class="eyebrow">New VM</p>
+      <h1>Launch a slice</h1>
+      <p class="muted">Pick an image, shape the resources, and optionally expose it on the public edge.</p>
+    </div>
+  </section>
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+  {{if .Quota}}<section class="metrics-grid"><div class="metric-card"><span>VMs</span><strong>{{index .Quota "vm_used"}} / {{index .Quota "vm_limit"}}</strong></div><div class="metric-card"><span>vCPU</span><strong>{{index .Quota "cpu_used"}} / {{index .Quota "cpu_limit"}}</strong></div><div class="metric-card"><span>RAM</span><strong>{{index .Quota "ram_used_mb"}} / {{index .Quota "ram_limit_mb"}} MB</strong></div><div class="metric-card"><span>Disk</span><strong>{{index .Quota "disk_used_mb"}} / {{index .Quota "disk_limit_mb"}} MB</strong></div></section>{{end}}
+  <div class="card form-card">
+  <form method="post" action="/vms" class="stack-form">
+    <label>Owner</label>
     <select name="user_id" required>
       {{range .Users}}<option value="{{index . "id"}}">{{index . "handle"}}</option>{{end}}
     </select>
+    <label>Name</label>
     <input type="text" name="name" placeholder="name" required>
-    <input type="text" name="image" value="ussyuntu" required>
+    <label>Image</label>
+    <select name="image" required>
+      {{range .Images}}<option value="{{index . "ref"}}">{{index . "name"}} - {{index . "ref"}}</option>{{end}}
+    </select>
+    {{if .IsAdmin}}<p class="muted">Manage the image catalog from the Images page.</p>{{end}}
+    <label>vCPU</label>
     <input type="text" name="vcpu" value="2" required>
+    <label>Memory (MB)</label>
     <input type="text" name="memory_mb" value="1024" required>
+    <label>Disk (GB)</label>
     <input type="text" name="disk_gb" value="20" required>
+    <label>Subdomain</label>
     <input type="text" name="subdomain" placeholder="subdomain">
+    <label>Exposed port</label>
     <input type="text" name="exposed_port" value="8080">
-    <label><input type="checkbox" name="expose_subdomain"> Expose now</label>
+    <label class="checkbox-row"><input type="checkbox" name="expose_subdomain"> Expose now</label>
     <button type="submit">Create VM</button>
   </form>
+  </div>
 </main>
 </body>
 </html>

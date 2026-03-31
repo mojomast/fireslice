@@ -1,13 +1,20 @@
 {{define "nav"}}
-<nav>
-  <a href="/">VMs</a>
-  {{if .IsAdmin}}
-  <a href="/users">Users</a>
-  {{else}}
-  <a href="/users/{{.Principal.UserID}}">Account</a>
-  {{end}}
-  <a href="/vms/new">New VM</a>
-  <a href="/settings">Settings</a>
-  <form method="post" action="/logout"><button type="submit">Logout</button></form>
+<nav class="topbar">
+  <div>
+    <div class="brand">fireslice</div>
+    <div class="brand-sub">operator-managed microVM hosting</div>
+  </div>
+  <div class="nav-links">
+    <a href="/">VMs</a>
+    {{if .IsAdmin}}
+    <a href="/users">Users</a>
+    <a href="/images">Images</a>
+    {{else}}
+    <a href="/users/{{.Principal.UserID}}">Account</a>
+    {{end}}
+    <a href="/vms/new">New VM</a>
+    <a href="/settings">Settings</a>
+    <form method="post" action="/logout"><button type="submit" class="ghost">Logout</button></form>
+  </div>
 </nav>
 {{end}}

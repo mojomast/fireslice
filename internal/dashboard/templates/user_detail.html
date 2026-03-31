@@ -9,6 +9,21 @@
 <body>
 <main>
   {{template "nav" .}}
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+  <section class="hero compact">
+    <div>
+      <p class="eyebrow">Account</p>
+      <h1>{{index .User "handle"}}</h1>
+      <p class="muted">{{index .User "email"}}</p>
+    </div>
+  </section>
+  <section class="metrics-grid">
+    <div class="metric-card"><span>Trust</span><strong>{{index .User "role"}} / {{index .User "trust_level"}}</strong></div>
+    <div class="metric-card"><span>VMs</span><strong>{{index .User "vm_count"}} / {{index .User "vm_limit"}}</strong></div>
+    <div class="metric-card"><span>vCPU</span><strong>{{index .User "cpu_used"}} / {{index .User "cpu_limit"}}</strong></div>
+    <div class="metric-card"><span>RAM</span><strong>{{index .User "ram_used_mb"}} / {{index .User "ram_limit_mb"}} MB</strong></div>
+    <div class="metric-card"><span>Disk</span><strong>{{index .User "disk_used_mb"}} / {{index .User "disk_limit_mb"}} MB</strong></div>
+  </section>
   <div class="card">
     <h1>{{index .User "handle"}}</h1>
     <p>{{index .User "email"}}</p>
@@ -18,7 +33,7 @@
   {{if .IsAdmin}}
   <div class="card">
     <h2>Resource allocation</h2>
-    <form method="post" action="/users/{{index .User "id"}}/quotas">
+    <form method="post" action="/users/{{index .User "id"}}/quotas" class="stack-form">
       <select name="trust_level">
         <option value="newbie"{{if eq (index .User "trust_level") "newbie"}} selected{{end}}>newbie</option>
         <option value="citizen"{{if eq (index .User "trust_level") "citizen"}} selected{{end}}>citizen</option>
@@ -35,7 +50,7 @@
   {{end}}
   <div class="card">
     <h2>SSH keys</h2>
-    <form method="post" action="/users/{{index .User "id"}}/keys">
+    <form method="post" action="/users/{{index .User "id"}}/keys" class="stack-form">
       <input type="text" name="label" placeholder="label" required>
       <input type="text" name="public_key" placeholder="ssh-ed25519 ..." required>
       <button type="submit">Add key</button>
@@ -53,14 +68,14 @@
   </div>
   <div class="card">
     <h2>Password</h2>
-    <form method="post" action="/users/{{index .User "id"}}/password">
+    <form method="post" action="/users/{{index .User "id"}}/password" class="stack-form">
       <input type="password" name="password" placeholder="new password" required>
       <button type="submit">Update password</button>
     </form>
   </div>
   <div class="card">
     <h2>VMs</h2>
-    <table>
+    <div class="table-wrap"><table>
       <thead><tr><th>Name</th><th>Status</th><th>Subdomain</th></tr></thead>
       <tbody>
         {{range .VMs}}
@@ -69,7 +84,7 @@
         <tr><td colspan="3" class="muted">No VMs.</td></tr>
         {{end}}
       </tbody>
-    </table>
+    </table></div>
   </div>
 </main>
 </body>

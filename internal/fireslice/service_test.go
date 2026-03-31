@@ -65,6 +65,16 @@ func TestServiceUpdateUserQuotas(t *testing.T) {
 	}
 }
 
+func TestServiceCreateVMRejectsUnknownImage(t *testing.T) {
+	users := &serviceStubUsers{get: map[int64]*db.User{1: {ID: 1, Handle: "alice", VMLimit: 3, CPULimit: 4, RAMLimitMB: 4096, DiskLimitMB: 40960}}}
+	vms := &serviceStubVMs{created: &db.VM{ID: 10, UserID: 1, Name: "alpha", Image: "custom", VCPU: 2, MemoryMB: 1024, DiskGB: 20}, get: map[int64]*db.VM{}, byUser: map[int64][]*db.VM{}}
+	service := &Service{Users: users, VMs: vms, VMRun: &serviceStubRuntime{}, Images: stubImageStore{images: []ImageCatalogEntry{{Name: "ussyuntu", Ref: "ussyuntu"}}}}
+
+	if _, err := service.CreateVM(context.Background(), CreateVMInput{UserID: 1, Name: "alpha", Image: "custom", VCPU: 2, MemoryMB: 1024, DiskGB: 20}); err == nil || err.Error() != "image is not available" {
+		t.Fatalf("expected image rejection, got %v", err)
+	}
+}
+
 type serviceStubUsers struct {
 	get                map[int64]*db.User
 	keys               map[int64][]*db.SSHKey
@@ -144,6 +154,14 @@ func (s *serviceStubVMs) UpdateVMExposure(context.Context, int64, bool, string, 
 func (s *serviceStubVMs) DeleteVM(context.Context, int64) error { return nil }
 
 type serviceStubRuntime struct{ calls int }
+
+type stubImageStore struct{ images []ImageCatalogEntry }
+
+func (s stubImageStore) ListImages(context.Context) ([]ImageCatalogEntry, error) {
+	return s.images, nil
+}
+func (s stubImageStore) AddImage(context.Context, ImageCatalogEntry) error { return nil }
+func (s stubImageStore) DeleteImage(context.Context, string) error         { return nil }
 
 func (s *serviceStubRuntime) CreateAndStartWithOptions(context.Context, vm.CreateOptions) error {
 	s.calls++

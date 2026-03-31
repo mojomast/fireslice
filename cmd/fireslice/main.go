@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -82,6 +83,7 @@ func main() {
 	}
 	service := app.NewService(userStore, vmStore, vmRuntime, proxyMgr)
 	service.Audit = auditStore
+	service.Images = app.NewFileImageStore(filepath.Join(cfg.DataDir, "images", "catalog.json"))
 
 	var authMgr *sessionauth.Manager
 	if cfg.AdminPassBcrypt != "" || userStore != nil {

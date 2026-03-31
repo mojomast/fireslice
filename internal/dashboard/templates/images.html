@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fireslice images</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<main>
+  {{template "nav" .}}
+  <section class="hero compact">
+    <div>
+      <p class="eyebrow">Images</p>
+      <h1>Curate the launch catalog</h1>
+      <p class="muted">Each entry is an allowed OCI image reference that users can pick from when launching a VM.</p>
+    </div>
+  </section>
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+  <div class="card form-card">
+    <h2>Add image</h2>
+    <form method="post" action="/images" class="stack-form">
+      <input type="text" name="name" placeholder="display name" required>
+      <input type="text" name="ref" placeholder="oci image ref" required>
+      <input type="text" name="description" placeholder="description">
+      <button type="submit">Add image</button>
+    </form>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Name</th><th>Reference</th><th>Description</th><th>Actions</th></tr></thead>
+    <tbody>
+      {{range .Images}}
+      <tr>
+        <td>{{index . "name"}}</td>
+        <td><code>{{index . "ref"}}</code></td>
+        <td>{{index . "description"}}</td>
+        <td>
+          <form method="post" action="/images/delete">
+            <input type="hidden" name="ref" value="{{index . "ref"}}">
+            <button type="submit" class="ghost danger">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" class="muted">No images in the catalog.</td></tr>
+      {{end}}
+    </tbody>
+  </table></div>
+</main>
+</body>
+</html>

@@ -16,6 +16,7 @@ type Service struct {
 	VMRun  VMRuntime
 	Routes RouteManager
 	Audit  AuditStore
+	Images ImageStore
 }
 
 func NewService(users UserStore, vms VMStore, vmRun VMRuntime, routes RouteManager) *Service {
@@ -32,6 +33,9 @@ func (s *Service) CreateVM(ctx context.Context, input CreateVMInput) (*db.VM, er
 		return nil, fmt.Errorf("vm store unavailable")
 	}
 	if err := s.validateCreateVMResources(ctx, input); err != nil {
+		return nil, err
+	}
+	if err := s.validateImageSelection(ctx, input.Image); err != nil {
 		return nil, err
 	}
 	vmRecord, err := s.VMs.CreateVMRecord(ctx, input)
@@ -67,6 +71,22 @@ func (s *Service) CreateVM(ctx context.Context, input CreateVMInput) (*db.VM, er
 
 	_ = s.logAudit(ctx, "vm.created", "vm", vmRecord.ID, vmRecord.Name)
 	return s.VMs.GetVM(ctx, vmRecord.ID)
+}
+
+func (s *Service) validateImageSelection(ctx context.Context, imageRef string) error {
+	if s.Images == nil {
+		return nil
+	}
+	images, err := s.Images.ListImages(ctx)
+	if err != nil {
+		return err
+	}
+	for _, image := range images {
+		if image.Ref == imageRef {
+			return nil
+		}
+	}
+	return fmt.Errorf("image is not available")
 }
 
 func (s *Service) validateCreateVMResources(ctx context.Context, input CreateVMInput) error {

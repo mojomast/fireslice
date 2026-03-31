@@ -9,16 +9,20 @@
 <body>
 <main>
   {{template "nav" .}}
-  <h1>Settings</h1>
-  {{if not .IsAdmin}}<p>Account settings for {{index .Config "handle"}}</p>{{end}}
-  <table>
+  <section class="hero compact">
+    <div>
+      <p class="eyebrow">Settings</p>
+      <h1>{{if not .IsAdmin}}Account settings for {{index .Config "handle"}}{{else}}Operator config{{end}}</h1>
+    </div>
+  </section>
+  <div class="table-wrap"><table>
     <thead><tr><th>Key</th><th>Value</th></tr></thead>
     <tbody>
       {{range $k, $v := .Config}}
       <tr><td>{{$k}}</td><td>{{$v}}</td></tr>
       {{end}}
     </tbody>
-  </table>
+  </table></div>
 </main>
 </body>
 </html>

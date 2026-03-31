@@ -56,11 +56,14 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /users", protected)
 	mux.Handle("GET /users/{id}", protected)
 	mux.Handle("GET /vms/new", protected)
+	mux.Handle("GET /images", protected)
 	mux.Handle("GET /settings", protected)
 	mux.Handle("POST /users", protected)
 	mux.Handle("POST /users/{id}/keys", protected)
 	mux.Handle("POST /users/{id}/delete", protected)
 	mux.Handle("POST /users/{id}/password", protected)
+	mux.Handle("POST /images", protected)
+	mux.Handle("POST /images/delete", protected)
 	mux.Handle("POST /vms", protected)
 	mux.Handle("POST /vms/{id}/start", protected)
 	mux.Handle("POST /vms/{id}/stop", protected)
@@ -111,6 +114,8 @@ func (h *Handler) routeProtected(w http.ResponseWriter, r *http.Request) {
 		h.renderUserDetail(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/vms/new":
 		h.renderVMNew(w, r, principal, "")
+	case r.Method == http.MethodGet && r.URL.Path == "/images":
+		h.renderImages(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/settings":
 		h.renderSettings(w, r, principal)
 	case r.Method == http.MethodPost:
@@ -243,7 +248,18 @@ func (h *Handler) renderVMNew(w http.ResponseWriter, r *http.Request, principal 
 	} else {
 		rows = append(rows, map[string]any{"id": principal.UserID, "handle": principal.Username})
 	}
-	data := map[string]any{"Users": rows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin"}
+	images := []map[string]any{}
+	if h.service.Images != nil {
+		entries, err := h.service.Images.ListImages(r.Context())
+		if err != nil {
+			h.renderError(w, err.Error())
+			return
+		}
+		for _, image := range entries {
+			images = append(images, map[string]any{"name": image.Name, "ref": image.Ref, "description": image.Description})
+		}
+	}
+	data := map[string]any{"Users": rows, "Images": images, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin"}
 	if principal.Role != "admin" {
 		if user, err := h.service.Users.GetUser(r.Context(), principal.UserID); err == nil {
 			vms, _ := h.service.VMs.ListVMsByUser(r.Context(), principal.UserID)
@@ -259,6 +275,25 @@ func (h *Handler) renderVMNew(w http.ResponseWriter, r *http.Request, principal 
 		}
 	}
 	_ = h.templates.ExecuteTemplate(w, "vm_new.html", data)
+}
+
+func (h *Handler) renderImages(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal, errMsg string) {
+	if principal.Role != "admin" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	images := []map[string]any{}
+	if h.service.Images != nil {
+		entries, err := h.service.Images.ListImages(r.Context())
+		if err != nil {
+			h.renderError(w, err.Error())
+			return
+		}
+		for _, image := range entries {
+			images = append(images, map[string]any{"name": image.Name, "ref": image.Ref, "description": image.Description})
+		}
+	}
+	_ = h.templates.ExecuteTemplate(w, "images.html", map[string]any{"Images": images, "Error": errMsg, "Principal": principal, "IsAdmin": true})
 }
 
 func (h *Handler) renderSettings(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal) {
@@ -332,6 +367,26 @@ func (h *Handler) handleAction(w http.ResponseWriter, r *http.Request, principal
 			return
 		}
 		redirectTo = "/users"
+	case path == "/images" && principal.Role == "admin":
+		if h.service.Images == nil {
+			h.renderImages(w, r, principal, "image store unavailable")
+			return
+		}
+		if err := h.service.Images.AddImage(ctx, fireslice.ImageCatalogEntry{Name: r.FormValue("name"), Ref: r.FormValue("ref"), Description: r.FormValue("description")}); err != nil {
+			h.renderImages(w, r, principal, err.Error())
+			return
+		}
+		redirectTo = "/images"
+	case path == "/images/delete" && principal.Role == "admin":
+		if h.service.Images == nil {
+			h.renderImages(w, r, principal, "image store unavailable")
+			return
+		}
+		if err := h.service.Images.DeleteImage(ctx, r.FormValue("ref")); err != nil {
+			h.renderImages(w, r, principal, err.Error())
+			return
+		}
+		redirectTo = "/images"
 	case path == "/vms":
 		userID := principal.UserID
 		if principal.Role == "admin" {

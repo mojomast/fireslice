@@ -8,15 +8,22 @@
 </head>
 <body>
 <main>
-  <div class="card">
-    <h1>fireslice login</h1>
-    {{if .Error}}<p>{{.Error}}</p>{{end}}
-    <form method="post" action="/login">
+  <section class="login-shell">
+    <div class="login-copy">
+      <p class="eyebrow">fireslice</p>
+      <h1>Operate microVMs without losing the thread.</h1>
+      <p class="muted">Admin assigns trust and resources. Users launch the slices they need inside those boundaries.</p>
+    </div>
+    <div class="card login-card">
+    <h1>Sign in</h1>
+    {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+    <form method="post" action="/login" class="stack-form">
       <input type="text" name="username" placeholder="username" required>
       <input type="password" name="password" placeholder="password" required>
       <button type="submit">Login</button>
     </form>
-  </div>
+    </div>
+  </section>
 </main>
 </body>
 </html>

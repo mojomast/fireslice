@@ -114,6 +114,7 @@ func (m *Manager) AddRoute(ctx context.Context, vmName, vmIP string, port int) e
 		Match: []caddyMatch{
 			{Host: []string{hostname}},
 		},
+		Terminal: true,
 		Handle: []caddyHandler{
 			{
 				Handler: "subroute",
@@ -129,10 +130,9 @@ func (m *Manager) AddRoute(ctx context.Context, vmName, vmIP string, port int) e
 		return fmt.Errorf("marshal route: %w", err)
 	}
 
-	// Use Caddy's /config/apps/http/servers/srv0/routes API
-	// POST adds a new route
-	url := fmt.Sprintf("%s/config/apps/http/servers/srv0/routes", m.adminAPI)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	// Insert the route before the wildcard fallback so a real VM host wins.
+	url := fmt.Sprintf("%s/config/apps/http/servers/srv0/routes/1", m.adminAPI)
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -441,9 +441,10 @@ type caddyServer struct {
 }
 
 type caddyRoute struct {
-	ID     string         `json:"@id,omitempty"`
-	Match  []caddyMatch   `json:"match,omitempty"`
-	Handle []caddyHandler `json:"handle"`
+	ID       string         `json:"@id,omitempty"`
+	Match    []caddyMatch   `json:"match,omitempty"`
+	Terminal bool           `json:"terminal,omitempty"`
+	Handle   []caddyHandler `json:"handle"`
 }
 
 type caddyMatch struct {
@@ -451,15 +452,15 @@ type caddyMatch struct {
 }
 
 type caddyHandler struct {
-	Handler     string          `json:"handler"`
-	Routes      []caddySubroute `json:"routes,omitempty"`
-	Upstreams   []caddyUpstream `json:"upstreams,omitempty"`
-	StatusCode  int             `json:"status_code,omitempty"`
-	Body        string          `json:"body,omitempty"`
-	Request     *caddyHeaderOps `json:"request,omitempty"`
+	Handler    string          `json:"handler"`
+	Routes     []caddySubroute `json:"routes,omitempty"`
+	Upstreams  []caddyUpstream `json:"upstreams,omitempty"`
+	StatusCode int             `json:"status_code,omitempty"`
+	Body       string          `json:"body,omitempty"`
+	Request    *caddyHeaderOps `json:"request,omitempty"`
 	// forward_auth fields
-	URI         string          `json:"uri,omitempty"`
-	CopyHeaders []string        `json:"copy_headers,omitempty"`
+	URI         string   `json:"uri,omitempty"`
+	CopyHeaders []string `json:"copy_headers,omitempty"`
 }
 
 type caddySubroute struct {

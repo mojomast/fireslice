@@ -9,17 +9,28 @@
 <body>
 <main>
   {{template "nav" .}}
-  <h1>Users</h1>
-  <form method="post" action="/users">
-    <input type="text" name="handle" placeholder="handle" required>
-    <input type="text" name="email" placeholder="email">
-    <input type="password" name="password" placeholder="password" required>
-    <select name="role">
-      <option value="user">user</option>
-      <option value="admin">admin</option>
-    </select>
-    <button type="submit">Create user</button>
-  </form>
+  <section class="hero compact">
+    <div>
+      <p class="eyebrow">Users</p>
+      <h1>People and allocations</h1>
+      <p class="muted">Create accounts, assign trust, and control available compute.</p>
+    </div>
+  </section>
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+  <div class="card form-card">
+    <h2>Create user</h2>
+    <form method="post" action="/users" class="stack-form">
+      <input type="text" name="handle" placeholder="handle" required>
+      <input type="text" name="email" placeholder="email">
+      <input type="password" name="password" placeholder="password" required>
+      <select name="role">
+        <option value="user">user</option>
+        <option value="admin">admin</option>
+      </select>
+      <button type="submit">Create user</button>
+    </form>
+  </div>
+  <div class="table-wrap">
   <table>
     <thead><tr><th>Handle</th><th>Email</th><th>Role</th><th>Trust</th><th>Quota</th><th>Keys</th><th>VMs</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>
@@ -40,6 +51,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
 </main>
 </body>
 </html>

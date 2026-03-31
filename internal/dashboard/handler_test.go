@@ -65,7 +65,8 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 			CreatedAt:  db.SQLiteTime{Time: time.Now()},
 			UpdatedAt:  db.SQLiteTime{Time: time.Now()},
 		}}},
-		VMs: &dashboardStubVMs{},
+		VMs:    &dashboardStubVMs{},
+		Images: dashboardStubImages{images: []fireslice.ImageCatalogEntry{{Name: "ussyuntu", Ref: "ussyuntu", Description: "Default image"}}},
 	}, auth, map[string]string{"domain": "example.test"})
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +115,23 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 		}
 		if location := rec.Header().Get("Location"); location != "/users/7" {
 			t.Fatalf("location = %q, want /users/7", location)
+		}
+	})
+
+	t.Run("vm create page shows image select", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/vms/new", nil)
+		req.AddCookie(cookies[0])
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "<select name=\"image\" required>") {
+			t.Fatalf("vm new page missing image select: %s", body)
+		}
+		if !strings.Contains(body, "ussyuntu - ussyuntu") {
+			t.Fatalf("vm new page missing image option: %s", body)
 		}
 	})
 }
@@ -165,6 +183,14 @@ func (s *dashboardStubUsers) ListSSHKeys(context.Context, int64) ([]*db.SSHKey, 
 }
 
 type dashboardStubVMs struct{}
+
+type dashboardStubImages struct{ images []fireslice.ImageCatalogEntry }
+
+func (s dashboardStubImages) ListImages(context.Context) ([]fireslice.ImageCatalogEntry, error) {
+	return s.images, nil
+}
+func (s dashboardStubImages) AddImage(context.Context, fireslice.ImageCatalogEntry) error { return nil }
+func (s dashboardStubImages) DeleteImage(context.Context, string) error                   { return nil }
 
 func (s *dashboardStubVMs) CreateVMRecord(context.Context, fireslice.CreateVMInput) (*db.VM, error) {
 	return nil, nil

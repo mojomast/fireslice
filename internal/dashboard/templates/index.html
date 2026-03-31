@@ -9,9 +9,17 @@
 <body>
 <main>
   {{template "nav" .}}
-  <h1>VMs</h1>
-  {{if .Error}}<p>{{.Error}}</p>{{end}}
-  {{if .Quota}}<p>{{index .Quota "vm_used"}} / {{index .Quota "vm_limit"}} VMs, {{index .Quota "cpu_used"}} / {{index .Quota "cpu_limit"}} vCPU, {{index .Quota "ram_used_mb"}} / {{index .Quota "ram_limit_mb"}} MB RAM, {{index .Quota "disk_used_mb"}} / {{index .Quota "disk_limit_mb"}} MB disk</p>{{end}}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Dashboard</p>
+      <h1>Active slices</h1>
+      <p class="muted">Track running workloads, exposure status, and ownership at a glance.</p>
+    </div>
+    <a class="button-link" href="/vms/new">Launch a VM</a>
+  </section>
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+  {{if .Quota}}<section class="metrics-grid"><div class="metric-card"><span>VMs</span><strong>{{index .Quota "vm_used"}} / {{index .Quota "vm_limit"}}</strong></div><div class="metric-card"><span>vCPU</span><strong>{{index .Quota "cpu_used"}} / {{index .Quota "cpu_limit"}}</strong></div><div class="metric-card"><span>RAM</span><strong>{{index .Quota "ram_used_mb"}} / {{index .Quota "ram_limit_mb"}} MB</strong></div><div class="metric-card"><span>Disk</span><strong>{{index .Quota "disk_used_mb"}} / {{index .Quota "disk_limit_mb"}} MB</strong></div></section>{{end}}
+  <div class="table-wrap">
   <table>
     <thead><tr><th>Name</th><th>Owner</th><th>State</th><th>IP</th><th>Subdomain</th><th>Port</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>
@@ -43,6 +51,7 @@
       {{end}}
     </tbody>
   </table>
+  </div>
 </main>
 </body>
 </html>
