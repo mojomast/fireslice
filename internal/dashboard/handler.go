@@ -62,6 +62,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("POST /users/{id}/keys", protected)
 	mux.Handle("POST /users/{id}/delete", protected)
 	mux.Handle("POST /users/{id}/password", protected)
+	mux.Handle("POST /users/{id}/quotas", protected)
 	mux.Handle("POST /images", protected)
 	mux.Handle("POST /images/delete", protected)
 	mux.Handle("POST /vms", protected)
