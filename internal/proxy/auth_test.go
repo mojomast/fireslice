@@ -172,6 +172,26 @@ func TestAuthProxy_ForwardAuthVMNameFromXForwardedHost(t *testing.T) {
 	}
 }
 
+func TestAuthProxy_UsesSubdomainLookup(t *testing.T) {
+	proxy, database, _, _, vmRecord := testAuthProxy(t)
+	ctx := context.Background()
+	if err := database.UpdateFiresliceVMExposure(ctx, vmRecord.ID, true, "custom-host", 8081); err != nil {
+		t.Fatalf("UpdateFiresliceVMExposure: %v", err)
+	}
+	if err := database.SetVMPublic(ctx, vmRecord.ID, true); err != nil {
+		t.Fatalf("SetVMPublic: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://custom-host.ussy.host/", nil)
+	req.Host = "custom-host.ussy.host"
+	rr := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
 // TestAuthProxy_ForwardAuthShareLinkRedemption covers the full share-link
 // redemption flow as seen through Caddy's forward_auth:
 //   - r.Host is the auth proxy address, NOT the VM hostname

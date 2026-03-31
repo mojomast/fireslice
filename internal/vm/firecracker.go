@@ -233,11 +233,18 @@ func (fb *FirecrackerBackend) StopVM(ctx context.Context, vm *FirecrackerVM) err
 	if err := vm.machine.Shutdown(shutdownCtx); err != nil {
 		fb.logger.Warn("graceful shutdown failed, forcing stop", "error", err)
 		// Force stop
-		vm.machine.StopVMM()
+		if stopErr := vm.machine.StopVMM(); stopErr != nil {
+			return fmt.Errorf("force stop firecracker: %w", stopErr)
+		}
 	}
 
 	// Wait for the process to exit
-	vm.machine.Wait(ctx)
+	if err := vm.machine.Wait(ctx); err != nil {
+		return fmt.Errorf("wait for firecracker exit: %w", err)
+	}
+	if processIsFirecracker(int64(pid)) {
+		return fmt.Errorf("firecracker pid %d is still running after stop", pid)
+	}
 
 	// Cancel the VM context
 	vm.cancelFunc()

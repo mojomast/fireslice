@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/mojomast/fireslice/internal/db"
+	"github.com/mojomast/fireslice/internal/gateway"
 	"github.com/mojomast/fireslice/internal/vm"
 )
 
@@ -17,6 +19,8 @@ type Service struct {
 	Routes RouteManager
 	Audit  AuditStore
 	Images ImageStore
+	Meta   MetadataManager
+	Domain string
 }
 
 func NewService(users UserStore, vms VMStore, vmRun VMRuntime, routes RouteManager) *Service {
@@ -46,6 +50,7 @@ func (s *Service) CreateVM(ctx context.Context, input CreateVMInput) (*db.VM, er
 	if s.VMRun != nil {
 		keys, err := s.userKeys(ctx, input.UserID)
 		if err != nil {
+			_ = s.VMs.DeleteVM(ctx, vmRecord.ID)
 			return nil, err
 		}
 		if err := s.VMRun.CreateAndStartWithOptions(ctx, vm.CreateOptions{
@@ -58,13 +63,26 @@ func (s *Service) CreateVM(ctx context.Context, input CreateVMInput) (*db.VM, er
 			SSHKeys:    keys,
 			Env:        map[string]string{},
 		}); err != nil {
+			_ = s.VMs.DeleteVM(ctx, vmRecord.ID)
 			return nil, err
 		}
 		vmRecord.Status = "running"
 	}
 
+	if err := s.syncMetadataRegistration(ctx, vmRecord.ID); err != nil {
+		if s.VMRun != nil {
+			_ = s.VMRun.Destroy(ctx, vmRecord.ID)
+		}
+		_ = s.VMs.DeleteVM(ctx, vmRecord.ID)
+		return nil, err
+	}
+
 	if input.ExposeSubdomain {
 		if err := s.ExposeVM(ctx, vmRecord.ID, input.Subdomain, input.ExposedPort); err != nil {
+			if s.VMRun != nil {
+				_ = s.VMRun.Destroy(ctx, vmRecord.ID)
+			}
+			_ = s.VMs.DeleteVM(ctx, vmRecord.ID)
 			return nil, err
 		}
 	}
@@ -169,8 +187,20 @@ func (s *Service) StartVM(ctx context.Context, id int64) error {
 	if err := s.VMs.UpdateVMStatus(ctx, id, "running"); err != nil {
 		return err
 	}
+	if err := s.syncMetadataRegistration(ctx, id); err != nil {
+		_ = s.VMRun.Stop(ctx, id)
+		_ = s.VMs.UpdateVMStatus(ctx, id, "stopped")
+		return err
+	}
+	vmRecord, err = s.VMs.GetVM(ctx, id)
+	if err != nil {
+		return err
+	}
 	if vmRecord.ExposeSubdomain {
 		if err := s.addRoute(ctx, vmRecord); err != nil {
+			s.unregisterMetadata(vmRecord)
+			_ = s.VMRun.Stop(ctx, id)
+			_ = s.VMs.UpdateVMStatus(ctx, id, "stopped")
 			return err
 		}
 	}
@@ -186,11 +216,14 @@ func (s *Service) StopVM(ctx context.Context, id int64) error {
 		return err
 	}
 	if vmRecord.ExposeSubdomain {
-		_ = s.removeRoute(ctx, vmRecord)
+		if err := s.removeRoute(ctx, vmRecord); err != nil {
+			return err
+		}
 	}
 	if err := s.VMRun.Stop(ctx, id); err != nil {
 		return err
 	}
+	s.unregisterMetadata(vmRecord)
 	if err := s.VMs.UpdateVMStatus(ctx, id, "stopped"); err != nil {
 		return err
 	}
@@ -206,8 +239,11 @@ func (s *Service) DestroyVM(ctx context.Context, id int64) error {
 		return err
 	}
 	if vmRecord.ExposeSubdomain {
-		_ = s.removeRoute(ctx, vmRecord)
+		if err := s.removeRoute(ctx, vmRecord); err != nil {
+			return err
+		}
 	}
+	s.unregisterMetadata(vmRecord)
 	if err := s.VMRun.Destroy(ctx, id); err != nil {
 		return err
 	}
@@ -236,6 +272,7 @@ func (s *Service) ExposeVM(ctx context.Context, id int64, subdomain string, port
 		return err
 	}
 	if err := s.addRoute(ctx, vmRecord); err != nil {
+		_ = s.VMs.UpdateVMExposure(ctx, id, false, "", vmRecord.ExposedPort)
 		return err
 	}
 	return s.logAudit(ctx, "vm.exposed", "vm", id, vmRecord.Subdomain.String)
@@ -250,7 +287,9 @@ func (s *Service) HideVM(ctx context.Context, id int64) error {
 		return err
 	}
 	if vmRecord.Subdomain.Valid {
-		_ = s.removeRoute(ctx, vmRecord)
+		if err := s.removeRoute(ctx, vmRecord); err != nil {
+			return err
+		}
 	}
 	if err := s.VMs.UpdateVMExposure(ctx, id, false, "", vmRecord.ExposedPort); err != nil {
 		return err
@@ -291,6 +330,54 @@ func (s *Service) removeRoute(ctx context.Context, vmRecord *db.VM) error {
 		return nil
 	}
 	return s.Routes.RemoveRoute(ctx, vmRecord.Subdomain.String)
+}
+
+func (s *Service) syncMetadataRegistration(ctx context.Context, vmID int64) error {
+	if s.Meta == nil || s.VMs == nil || s.Users == nil {
+		return nil
+	}
+	vmRecord, err := s.VMs.GetVM(ctx, vmID)
+	if err != nil {
+		return err
+	}
+	if !vmRecord.IPAddress.Valid {
+		return fmt.Errorf("vm ip address is not available")
+	}
+	user, err := s.Users.GetUser(ctx, vmRecord.UserID)
+	if err != nil {
+		return err
+	}
+	meta := &gateway.VMMetadata{
+		InstanceID: fmt.Sprintf("vm-%d", vmRecord.ID),
+		LocalIPv4:  vmRecord.IPAddress.String,
+		Hostname:   vmRecord.Name,
+		UserID:     user.ID,
+		UserHandle: user.Handle,
+		VMName:     vmRecord.Name,
+		Image:      vmRecord.Image,
+		Gateway:    metadataGateway(vmRecord.IPAddress.String),
+	}
+	s.Meta.RegisterVM(vmRecord.IPAddress.String, meta)
+	return nil
+}
+
+func metadataGateway(ip string) string {
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed == nil {
+		return "10.0.0.1"
+	}
+	v4 := parsed.To4()
+	if v4 == nil {
+		return "10.0.0.1"
+	}
+	return fmt.Sprintf("%d.%d.%d.1", v4[0], v4[1], v4[2])
+}
+
+func (s *Service) unregisterMetadata(vmRecord *db.VM) {
+	if s.Meta == nil || vmRecord == nil || !vmRecord.IPAddress.Valid {
+		return
+	}
+	s.Meta.UnregisterVM(vmRecord.IPAddress.String)
 }
 
 func (s *Service) logAudit(ctx context.Context, action, targetType string, targetID int64, detail string) error {

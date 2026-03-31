@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mojomast/fireslice/internal/db"
+	"github.com/mojomast/fireslice/internal/gateway"
 	"github.com/mojomast/fireslice/internal/vm"
 )
 
@@ -75,6 +76,44 @@ func TestServiceCreateVMRejectsUnknownImage(t *testing.T) {
 	}
 }
 
+func TestServiceCreateVMCleansUpRecordOnRuntimeFailure(t *testing.T) {
+	now := db.SQLiteTime{Time: time.Now()}
+	users := &serviceStubUsers{get: map[int64]*db.User{1: {ID: 1, Handle: "alice", VMLimit: 3, CPULimit: 4, RAMLimitMB: 4096, DiskLimitMB: 40960}}}
+	vms := &serviceStubVMs{
+		created: &db.VM{ID: 10, UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, Status: "creating", CreatedAt: now, UpdatedAt: now},
+		get:     map[int64]*db.VM{},
+		byUser:  map[int64][]*db.VM{},
+	}
+	runtime := &serviceStubRuntime{createErr: sql.ErrConnDone}
+	service := &Service{Users: users, VMs: vms, VMRun: runtime}
+
+	if _, err := service.CreateVM(context.Background(), CreateVMInput{UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20}); err == nil {
+		t.Fatal("expected create failure")
+	}
+	if len(vms.deleted) != 1 || vms.deleted[0] != 10 {
+		t.Fatalf("deleted vm ids = %v, want [10]", vms.deleted)
+	}
+}
+
+func TestServiceCreateVMRegistersMetadata(t *testing.T) {
+	now := db.SQLiteTime{Time: time.Now()}
+	users := &serviceStubUsers{get: map[int64]*db.User{1: {ID: 1, Handle: "alice", VMLimit: 3, CPULimit: 4, RAMLimitMB: 4096, DiskLimitMB: 40960}}}
+	vms := &serviceStubVMs{
+		created: &db.VM{ID: 10, UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, Status: "creating", CreatedAt: now, UpdatedAt: now},
+		get:     map[int64]*db.VM{10: {ID: 10, UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, Status: "running", IPAddress: sql.NullString{String: "10.0.0.9", Valid: true}, CreatedAt: now, UpdatedAt: now}},
+		byUser:  map[int64][]*db.VM{},
+	}
+	meta := &serviceStubMetadata{}
+	service := &Service{Users: users, VMs: vms, VMRun: &serviceStubRuntime{}, Meta: meta}
+
+	if _, err := service.CreateVM(context.Background(), CreateVMInput{UserID: 1, Name: "alpha", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.registeredIPs) != 1 || meta.registeredIPs[0] != "10.0.0.9" {
+		t.Fatalf("registered ips = %v, want [10.0.0.9]", meta.registeredIPs)
+	}
+}
+
 type serviceStubUsers struct {
 	get                map[int64]*db.User
 	keys               map[int64][]*db.SSHKey
@@ -123,6 +162,7 @@ type serviceStubVMs struct {
 	created *db.VM
 	get     map[int64]*db.VM
 	byUser  map[int64][]*db.VM
+	deleted []int64
 }
 
 func (s *serviceStubVMs) CreateVMRecord(_ context.Context, input CreateVMInput) (*db.VM, error) {
@@ -151,9 +191,29 @@ func (s *serviceStubVMs) UpdateVMStatus(context.Context, int64, string) error { 
 func (s *serviceStubVMs) UpdateVMExposure(context.Context, int64, bool, string, int) error {
 	return nil
 }
-func (s *serviceStubVMs) DeleteVM(context.Context, int64) error { return nil }
+func (s *serviceStubVMs) DeleteVM(_ context.Context, id int64) error {
+	s.deleted = append(s.deleted, id)
+	delete(s.get, id)
+	return nil
+}
 
-type serviceStubRuntime struct{ calls int }
+type serviceStubRuntime struct {
+	calls     int
+	createErr error
+}
+
+type serviceStubMetadata struct {
+	registeredIPs   []string
+	unregisteredIPs []string
+}
+
+func (s *serviceStubMetadata) RegisterVM(ip string, _ *gateway.VMMetadata) {
+	s.registeredIPs = append(s.registeredIPs, ip)
+}
+
+func (s *serviceStubMetadata) UnregisterVM(ip string) {
+	s.unregisteredIPs = append(s.unregisteredIPs, ip)
+}
 
 type stubImageStore struct{ images []ImageCatalogEntry }
 
@@ -165,7 +225,7 @@ func (s stubImageStore) DeleteImage(context.Context, string) error         { ret
 
 func (s *serviceStubRuntime) CreateAndStartWithOptions(context.Context, vm.CreateOptions) error {
 	s.calls++
-	return nil
+	return s.createErr
 }
 func (s *serviceStubRuntime) Start(context.Context, int64) error   { return nil }
 func (s *serviceStubRuntime) Stop(context.Context, int64) error    { return nil }

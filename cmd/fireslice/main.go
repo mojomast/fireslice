@@ -90,6 +90,8 @@ func main() {
 	service := app.NewService(userStore, vmStore, vmRuntime, proxyMgr)
 	service.Audit = auditStore
 	service.Images = app.NewFileImageStore(filepath.Join(cfg.DataDir, "images", "catalog.json"))
+	service.Meta = metaSrv
+	service.Domain = cfg.Domain
 
 	var authMgr *sessionauth.Manager
 	if cfg.AdminPassBcrypt != "" || userStore != nil {
@@ -157,6 +159,9 @@ func main() {
 
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if vmManager != nil {
+		vmManager.ShutdownAll(ctxTimeout)
+	}
 
 	if err := httpSrv.Shutdown(ctxTimeout); err != nil {
 		logger.Error("HTTP shutdown failed", "error", err)

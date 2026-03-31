@@ -456,7 +456,6 @@ func (d *DB) IsVMPublic(ctx context.Context, vmID int64) (bool, error) {
 }
 
 // VMByName returns a VM by its name (without user filter).
-// Used by the auth proxy to look up VMs by subdomain.
 func (d *DB) VMByName(ctx context.Context, name string) (*VM, error) {
 	var vm VM
 	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
@@ -464,6 +463,21 @@ func (d *DB) VMByName(ctx context.Context, name string) (*VM, error) {
 			`SELECT id, user_id, name, status, image, vcpu, memory_mb, disk_gb,
 			        tap_device, ip_address, mac_address, pid, expose_subdomain, subdomain, exposed_port, created_at, updated_at
 			 FROM vms WHERE name = ?`, name), &vm)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &vm, nil
+}
+
+// VMBySubdomain returns a VM by its configured public subdomain.
+func (d *DB) VMBySubdomain(ctx context.Context, subdomain string) (*VM, error) {
+	var vm VM
+	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
+		return scanVM(tx.QueryRowContext(ctx,
+			`SELECT id, user_id, name, status, image, vcpu, memory_mb, disk_gb,
+			        tap_device, ip_address, mac_address, pid, expose_subdomain, subdomain, exposed_port, created_at, updated_at
+			 FROM vms WHERE subdomain = ?`, subdomain), &vm)
 	})
 	if err != nil {
 		return nil, err

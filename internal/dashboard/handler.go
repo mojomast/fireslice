@@ -191,7 +191,7 @@ func (h *Handler) renderVMDetail(w http.ResponseWriter, r *http.Request, princip
 		domain = "slice.ussyco.de"
 	}
 	publicURL := ""
-	if vm.Subdomain.Valid {
+	if vm.ExposeSubdomain && vm.Subdomain.Valid {
 		publicURL = "https://" + vm.Subdomain.String + "." + domain
 	}
 	sshTarget := ""

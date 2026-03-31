@@ -214,6 +214,8 @@ func (m *Manager) EnsureBaseConfig(ctx context.Context, email string) error {
 						Routes: []caddyRoute{
 							// Default 404 handler for unmatched subdomains
 							{
+								Match:    []caddyMatch{{Host: []string{wildcardDomain}}},
+								Terminal: true,
 								Handle: []caddyHandler{
 									{
 										Handler:    "static_response",

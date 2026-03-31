@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/mojomast/fireslice/internal/db"
+	"github.com/mojomast/fireslice/internal/gateway"
 	"github.com/mojomast/fireslice/internal/vm"
 )
 
@@ -54,6 +55,11 @@ type VMStore interface {
 	UpdateVMStatus(ctx context.Context, id int64, status string) error
 	UpdateVMExposure(ctx context.Context, id int64, expose bool, subdomain string, port int) error
 	DeleteVM(ctx context.Context, id int64) error
+}
+
+type MetadataManager interface {
+	RegisterVM(ip string, meta *gateway.VMMetadata)
+	UnregisterVM(ip string)
 }
 
 type VMRuntime interface {

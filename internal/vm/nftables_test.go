@@ -73,36 +73,46 @@ func TestNftablesSetupNAT_Success(t *testing.T) {
 		t.Fatalf("SetupNAT() error = %v", err)
 	}
 
-	// Should have 2 commands: delete old table (cleanup) + apply ruleset
-	if exec.CommandCount() != 2 {
-		t.Errorf("expected 2 commands, got %d: %v", exec.CommandCount(), exec.commands)
+	if exec.CommandCount() == 0 {
+		t.Fatal("expected nft commands to run")
 	}
-
-	// First command should delete old table
-	if !exec.HasCommand("nft delete table inet ussycode") {
-		t.Error("expected 'nft delete table' command")
+	if !exec.HasCommand("nft add table inet ussycode") {
+		t.Error("expected 'nft add table' command")
 	}
-
-	// Second command should apply the ruleset via nft -f -
-	if !exec.HasCommand("nft -f -") {
-		t.Error("expected 'nft -f -' command")
+	if !exec.HasCommand("base-metadata-redirect") {
+		t.Error("expected metadata redirect base rule")
 	}
 }
 
-func TestNftablesSetupNAT_DeleteOldTableFirst(t *testing.T) {
+func TestNftablesSetupNAT_Idempotent(t *testing.T) {
 	exec := newMockExecutor()
 	nft := NewNftablesManager(exec, testNftLogger())
+	listWithBaseRules := `table inet ussycode {
+    chain prerouting {
+        iifname "ussy0" ip daddr 169.254.169.254 tcp dport 80 redirect to :8083 comment "base-metadata-redirect" # handle 1
+    }
+    chain postrouting {
+        oifname != "ussy0" ip saddr 10.0.0.0/24 masquerade comment "base-masquerade" # handle 2
+    }
+    chain forward {
+        iifname "ussy0" accept comment "base-forward-from-bridge" # handle 3
+        oifname "ussy0" ct state established,related accept comment "base-forward-to-bridge" # handle 4
+    }
+}`
+	exec.SetResponse("nft --handle list chain inet ussycode prerouting", []byte(listWithBaseRules), nil)
+	exec.SetResponse("nft --handle list chain inet ussycode postrouting", []byte(listWithBaseRules), nil)
+	exec.SetResponse("nft --handle list chain inet ussycode forward", []byte(listWithBaseRules), nil)
 
-	// Verify that SetupNAT always tries to delete the old table first
 	_ = nft.SetupNAT(context.Background(), "ussy0", "10.0.0.0/24")
 
-	if exec.CommandCount() < 2 {
-		t.Fatalf("expected at least 2 commands, got %d", exec.CommandCount())
+	baseAdds := 0
+	for _, cmd := range exec.commands {
+		if strings.Contains(cmd, "base-") && strings.Contains(cmd, "add rule") {
+			baseAdds++
+		}
 	}
-
-	// First command should be the delete
-	if !strings.Contains(exec.commands[0], "delete table") {
-		t.Errorf("first command should be 'delete table', got: %s", exec.commands[0])
+	if baseAdds != 0 {
+		t.Fatalf("expected no duplicate base rule insertion, got %d commands: %v", baseAdds, exec.commands)
 	}
 }
 

@@ -106,8 +106,17 @@ func (d *DB) UpdateFiresliceVMStatus(ctx context.Context, id int64, status strin
 func (d *DB) UpdateFiresliceVMExposure(ctx context.Context, id int64, expose bool, subdomain string, port int) error {
 	return d.WriteTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE vms SET expose_subdomain = ?, subdomain = CASE WHEN ? = '' THEN subdomain ELSE ? END, exposed_port = ?, updated_at = ? WHERE id = ?`,
-			boolToInt(expose), subdomain, subdomain, defaultPort(port), time.Now().UTC().Format(time.RFC3339), id,
+			`UPDATE vms
+			 SET expose_subdomain = ?,
+			     subdomain = CASE
+			         WHEN ? = 0 THEN NULL
+			         WHEN ? = '' THEN subdomain
+			         ELSE ?
+			     END,
+			     exposed_port = ?,
+			     updated_at = ?
+			 WHERE id = ?`,
+			boolToInt(expose), boolToInt(expose), subdomain, subdomain, defaultPort(port), time.Now().UTC().Format(time.RFC3339), id,
 		)
 		if err != nil {
 			return err

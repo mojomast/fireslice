@@ -59,8 +59,15 @@ func (ap *AuthProxy) Handler() http.Handler {
 			return
 		}
 
-		// Look up the VM
-		vm, err := ap.db.VMByName(ctx, vmName)
+		// Look up the VM by exposed subdomain first, then fall back to the raw
+		// VM name for older/internal routes that still match names directly.
+		vm, err := ap.db.VMBySubdomain(ctx, vmName)
+		if err == nil && vm != nil && !vm.ExposeSubdomain {
+			err = fmt.Errorf("subdomain is not exposed")
+		}
+		if err != nil {
+			vm, err = ap.db.VMByName(ctx, vmName)
+		}
 		if err != nil {
 			telemetry.RecordProxyDecision(ctx, "vm_not_found")
 			ap.logger.Debug("VM not found for host", "host", r.Host, "vm", vmName)

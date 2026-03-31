@@ -68,6 +68,7 @@ type Manager struct {
 	network NetworkBackend
 	fc      *FirecrackerBackend
 	dataDir string
+	domain  string
 	logger  *slog.Logger
 
 	// Track running VMs for shutdown/cleanup
@@ -92,6 +93,7 @@ type ManagerConfig struct {
 	InitrdPath     string
 	BridgeName     string
 	SubnetCIDR     string
+	Domain         string
 }
 
 // NewManager creates a new VM manager with all subsystems initialized.
@@ -141,6 +143,7 @@ func NewManager(database *db.DB, cfg *ManagerConfig, logger *slog.Logger) (*Mana
 		network: network,
 		fc:      fc,
 		dataDir: cfg.DataDir,
+		domain:  cfg.Domain,
 		logger:  logger,
 		running: make(map[int64]*RunningVM),
 	}
@@ -364,8 +367,10 @@ func (m *Manager) installGuestRuntime(ctx context.Context, rootfs string, cfg cr
 	envLines := []string{
 		"HOME=/home/ussycode",
 		fmt.Sprintf("FIRESLICE_VM_NAME=%s", cfg.Name),
-		"FIRESLICE_PUBLIC_DOMAIN=slice.ussyco.de",
+		fmt.Sprintf("FIRESLICE_PUBLIC_DOMAIN=%s", m.publicDomain()),
 		fmt.Sprintf("FIRESLICE_EXPOSED_PORT=%d", 8080),
+		fmt.Sprintf("USSYCODE_VM_NAME=%s", cfg.Name),
+		fmt.Sprintf("USSYCODE_PUBLIC_DOMAIN=%s", m.publicDomain()),
 	}
 	envLines = append(envLines, imgCfg.Env...)
 	for k, v := range cfg.Env {
@@ -637,6 +642,13 @@ func validateCreateOptions(opts CreateOptions) error {
 	}
 }
 
+func (m *Manager) publicDomain() string {
+	if strings.TrimSpace(m.domain) == "" {
+		return "slice.ussyco.de"
+	}
+	return m.domain
+}
+
 func dataDiskSizeBytes(dataDiskGB int) (int64, error) {
 	if dataDiskGB <= 0 {
 		return 0, fmt.Errorf("data_disk_gb must be greater than zero")
@@ -745,6 +757,9 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 		NetworkConfig: netCfg,
 	})
 	if err != nil {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(provisionCtx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("start VM: %w", err)
@@ -753,17 +768,26 @@ func (m *Manager) createAndStart(ctx context.Context, cfg createStartConfig) err
 	// 6. Confirm the VMM survives guest boot before reporting success.
 	pid := fcVM.Pid()
 	if !firecrackerStayedRunning(fcVM, firecrackerBootGracePeriod) {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(provisionCtx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("firecracker exited during guest boot")
 	}
 	ready, err := waitForGuestInit(vmRootfs, fcVM, firecrackerBootGracePeriod)
 	if err != nil {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(provisionCtx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("wait for guest init: %w", err)
 	}
 	if !ready {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(provisionCtx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		_ = m.db.UpdateVMStatus(provisionCtx, cfg.VMID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("guest init did not become ready")
@@ -922,9 +946,38 @@ func (m *Manager) Start(ctx context.Context, vmID int64, name, image string, vcp
 		NetworkConfig: netCfg,
 	})
 	if err != nil {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(ctx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
 		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
 		m.db.UpdateVMStatus(ctx, vmID, "error", nil, nil, nil, nil)
 		return fmt.Errorf("start VM: %w", err)
+	}
+
+	if !firecrackerStayedRunning(fcVM, firecrackerBootGracePeriod) {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(ctx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		_ = m.db.UpdateVMStatus(ctx, vmID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("firecracker exited during guest boot")
+	}
+	ready, err := waitForGuestInit(vmRootfs, fcVM, firecrackerBootGracePeriod)
+	if err != nil {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(ctx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		_ = m.db.UpdateVMStatus(ctx, vmID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("wait for guest init: %w", err)
+	}
+	if !ready {
+		if fw, ok := m.network.(*NetworkManager); ok {
+			_ = fw.firewall.RemoveVMRules(ctx, vmIDStr, netCfg.TapDevice, fw.bridge)
+		}
+		m.network.ReleaseNetwork(vmIDStr, netCfg.TapDevice)
+		_ = m.db.UpdateVMStatus(ctx, vmID, "error", nil, nil, nil, nil)
+		return fmt.Errorf("guest init did not become ready")
 	}
 
 	// Update DB
@@ -1012,6 +1065,11 @@ func (m *Manager) Destroy(ctx context.Context, vmID int64) error {
 // without deleting the database record. Fireslice uses this so lifecycle
 // orchestration stays in the service layer.
 func (m *Manager) DestroyResources(ctx context.Context, vmID int64) error {
+	vmRecord, err := m.db.GetFiresliceVM(ctx, vmID)
+	if err == nil && vmRecord.PID.Valid && processIsFirecracker(vmRecord.PID.Int64) {
+		return fmt.Errorf("vm %d is still running and cannot be destroyed safely", vmID)
+	}
+
 	// Stop if running
 	m.mu.RLock()
 	_, isRunning := m.running[vmID]

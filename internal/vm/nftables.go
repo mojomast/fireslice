@@ -88,39 +88,65 @@ func (n *NftablesManager) SetupNAT(ctx context.Context, bridge, subnetCIDR strin
 		"subnet", subnetCIDR,
 	)
 
-	// Build the nftables ruleset as a single atomic script.
-	// Using nft -f with a script ensures atomicity — either all rules
-	// are applied or none are.
-	//
-	// The prerouting chain redirects VM traffic destined for the metadata
-	// IP (169.254.169.254:80) to the internal metadata service port (8083).
-	// This is needed because nginx binds 0.0.0.0:80 on the host, stealing
-	// port 80 on the metadata IP before our metadata server can grab it.
-	ruleset := fmt.Sprintf(`
-table inet %s {
-    chain prerouting {
-        type nat hook prerouting priority dstnat; policy accept;
-        iifname "%s" ip daddr 169.254.169.254 tcp dport 80 redirect to :8083
-    }
-    chain postrouting {
-        type nat hook postrouting priority 100; policy accept;
-        oifname != "%s" ip saddr %s masquerade
-    }
-    chain forward {
-        type filter hook forward priority 0; policy drop;
-        iifname "%s" accept
-        oifname "%s" ct state established,related accept
-    }
-}
-`, n.table, bridge, bridge, subnetCIDR, bridge, bridge)
+	commands := [][]string{
+		{"add", "table", "inet", n.table},
+		{"add", "chain", "inet", n.table, "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat;", "policy", "accept;", "}"},
+		{"add", "chain", "inet", n.table, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "100;", "policy", "accept;", "}"},
+		{"add", "chain", "inet", n.table, "forward", "{", "type", "filter", "hook", "forward", "priority", "0;", "policy", "drop;", "}"},
+	}
+	for _, args := range commands {
+		out, err := n.runner.Execute(ctx, "nft", args...)
+		if err != nil && !strings.Contains(string(out), "File exists") {
+			return fmt.Errorf("ensure nftables object %v: %s: %w", args, string(out), err)
+		}
+	}
 
-	// First, try to delete any existing table (ignore errors if it doesn't exist)
-	n.runner.Execute(ctx, "nft", "delete", "table", "inet", n.table)
-
-	// Apply the ruleset atomically
-	out, err := n.runner.Execute(ctx, "nft", "-f", "-", ruleset)
-	if err != nil {
-		return fmt.Errorf("apply nftables ruleset: %s: %w", string(out), err)
+	type baseRule struct {
+		chain   string
+		comment string
+		args    []string
+	}
+	baseRules := []baseRule{
+		{
+			chain:   "prerouting",
+			comment: "base-metadata-redirect",
+			args: []string{
+				"iifname", bridge, "ip", "daddr", "169.254.169.254", "tcp", "dport", "80",
+				"redirect", "to", ":8083", "comment", `"base-metadata-redirect"`,
+			},
+		},
+		{
+			chain:   "postrouting",
+			comment: "base-masquerade",
+			args: []string{
+				"oifname", "!=", bridge, "ip", "saddr", subnetCIDR,
+				"masquerade", "comment", `"base-masquerade"`,
+			},
+		},
+		{
+			chain:   "forward",
+			comment: "base-forward-from-bridge",
+			args: []string{
+				"iifname", bridge, "accept", "comment", `"base-forward-from-bridge"`,
+			},
+		},
+		{
+			chain:   "forward",
+			comment: "base-forward-to-bridge",
+			args: []string{
+				"oifname", bridge, "ct", "state", "established,related", "accept", "comment", `"base-forward-to-bridge"`,
+			},
+		},
+	}
+	for _, rule := range baseRules {
+		if n.ruleExists(ctx, rule.chain, rule.comment) {
+			continue
+		}
+		args := append([]string{"add", "rule", "inet", n.table, rule.chain}, rule.args...)
+		out, err := n.runner.Execute(ctx, "nft", args...)
+		if err != nil {
+			return fmt.Errorf("add nftables base rule %s: %s: %w", rule.comment, string(out), err)
+		}
 	}
 
 	n.logger.Info("nftables NAT configured",
@@ -129,6 +155,14 @@ table inet %s {
 		"subnet", subnetCIDR,
 	)
 	return nil
+}
+
+func (n *NftablesManager) ruleExists(ctx context.Context, chain, comment string) bool {
+	out, err := n.runner.Execute(ctx, "nft", "--handle", "list", "chain", "inet", n.table, chain)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), comment)
 }
 
 // CleanupNAT removes the entire nftables table.
