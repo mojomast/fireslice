@@ -145,7 +145,21 @@ func (h *Handler) renderIndex(w http.ResponseWriter, r *http.Request, principal 
 			"created_at":   vm.CreatedAt.Time.Format("2006-01-02 15:04"),
 		})
 	}
-	_ = h.templates.ExecuteTemplate(w, "index.html", map[string]any{"VMs": rows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin"})
+	data := map[string]any{"VMs": rows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin"}
+	if principal.Role != "admin" {
+		if user, err := h.service.Users.GetUser(r.Context(), principal.UserID); err == nil {
+			totalCPU := 0
+			totalRAMMB := 0
+			totalDiskMB := 0
+			for _, vm := range vms {
+				totalCPU += vm.VCPU
+				totalRAMMB += vm.MemoryMB
+				totalDiskMB += vm.DiskGB * 1024
+			}
+			data["Quota"] = map[string]any{"vm_used": len(vms), "vm_limit": user.VMLimit, "cpu_used": totalCPU, "cpu_limit": user.CPULimit, "ram_used_mb": totalRAMMB, "ram_limit_mb": user.RAMLimitMB, "disk_used_mb": totalDiskMB, "disk_limit_mb": user.DiskLimitMB}
+		}
+	}
+	_ = h.templates.ExecuteTemplate(w, "index.html", data)
 }
 
 func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal, errMsg string) {
@@ -169,14 +183,18 @@ func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request, principal 
 			}
 		}
 		rows = append(rows, map[string]any{
-			"id":          user.ID,
-			"handle":      user.Handle,
-			"email":       user.Email,
-			"role":        user.Role,
-			"trust_level": user.TrustLevel,
-			"key_count":   len(keys),
-			"vm_count":    vmCount,
-			"created_at":  user.CreatedAt.Time.Format("2006-01-02 15:04"),
+			"id":            user.ID,
+			"handle":        user.Handle,
+			"email":         user.Email,
+			"role":          user.Role,
+			"trust_level":   user.TrustLevel,
+			"vm_limit":      user.VMLimit,
+			"cpu_limit":     user.CPULimit,
+			"ram_limit_mb":  user.RAMLimitMB,
+			"disk_limit_mb": user.DiskLimitMB,
+			"key_count":     len(keys),
+			"vm_count":      vmCount,
+			"created_at":    user.CreatedAt.Time.Format("2006-01-02 15:04"),
 		})
 	}
 	_ = h.templates.ExecuteTemplate(w, "users.html", map[string]any{"Users": rows, "Error": errMsg, "Principal": principal, "IsAdmin": true})
@@ -194,15 +212,21 @@ func (h *Handler) renderUserDetail(w http.ResponseWriter, r *http.Request, princ
 	}
 	keys, _ := h.service.Users.ListSSHKeys(r.Context(), id)
 	vms, _ := h.service.VMs.ListVMsByUser(r.Context(), id)
+	totalCPU := 0
+	totalRAMMB := 0
+	totalDiskMB := 0
 	keyRows := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
 		keyRows = append(keyRows, map[string]any{"label": key.Comment, "fingerprint": key.Fingerprint, "created_at": key.CreatedAt.Time.Format("2006-01-02 15:04")})
 	}
 	vmRows := make([]map[string]any, 0, len(vms))
 	for _, vm := range vms {
+		totalCPU += vm.VCPU
+		totalRAMMB += vm.MemoryMB
+		totalDiskMB += vm.DiskGB * 1024
 		vmRows = append(vmRows, map[string]any{"name": vm.Name, "status": vm.Status, "subdomain": vm.Subdomain.String})
 	}
-	_ = h.templates.ExecuteTemplate(w, "user_detail.html", map[string]any{"User": map[string]any{"id": user.ID, "handle": user.Handle, "email": user.Email, "role": user.Role, "trust_level": user.TrustLevel, "keys": keyRows}, "VMs": vmRows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin", "Self": principal.UserID == user.ID})
+	_ = h.templates.ExecuteTemplate(w, "user_detail.html", map[string]any{"User": map[string]any{"id": user.ID, "handle": user.Handle, "email": user.Email, "role": user.Role, "trust_level": user.TrustLevel, "vm_limit": user.VMLimit, "cpu_limit": user.CPULimit, "ram_limit_mb": user.RAMLimitMB, "disk_limit_mb": user.DiskLimitMB, "vm_count": len(vms), "cpu_used": totalCPU, "ram_used_mb": totalRAMMB, "disk_used_mb": totalDiskMB, "keys": keyRows}, "VMs": vmRows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin", "Self": principal.UserID == user.ID})
 }
 
 func (h *Handler) renderVMNew(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal, errMsg string) {
@@ -219,7 +243,22 @@ func (h *Handler) renderVMNew(w http.ResponseWriter, r *http.Request, principal 
 	} else {
 		rows = append(rows, map[string]any{"id": principal.UserID, "handle": principal.Username})
 	}
-	_ = h.templates.ExecuteTemplate(w, "vm_new.html", map[string]any{"Users": rows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin"})
+	data := map[string]any{"Users": rows, "Error": errMsg, "Principal": principal, "IsAdmin": principal.Role == "admin"}
+	if principal.Role != "admin" {
+		if user, err := h.service.Users.GetUser(r.Context(), principal.UserID); err == nil {
+			vms, _ := h.service.VMs.ListVMsByUser(r.Context(), principal.UserID)
+			totalCPU := 0
+			totalRAMMB := 0
+			totalDiskMB := 0
+			for _, vm := range vms {
+				totalCPU += vm.VCPU
+				totalRAMMB += vm.MemoryMB
+				totalDiskMB += vm.DiskGB * 1024
+			}
+			data["Quota"] = map[string]any{"vm_used": len(vms), "vm_limit": user.VMLimit, "cpu_used": totalCPU, "cpu_limit": user.CPULimit, "ram_used_mb": totalRAMMB, "ram_limit_mb": user.RAMLimitMB, "disk_used_mb": totalDiskMB, "disk_limit_mb": user.DiskLimitMB}
+		}
+	}
+	_ = h.templates.ExecuteTemplate(w, "vm_new.html", data)
 }
 
 func (h *Handler) renderSettings(w http.ResponseWriter, r *http.Request, principal dashboardPrincipal) {
@@ -252,6 +291,17 @@ func (h *Handler) handleAction(w http.ResponseWriter, r *http.Request, principal
 			return
 		}
 		redirectTo = "/users"
+	case strings.HasSuffix(path, "/quotas") && strings.HasPrefix(path, "/users/") && principal.Role == "admin":
+		id, _ := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/quotas"), 10, 64)
+		vmLimit, _ := strconv.Atoi(r.FormValue("vm_limit"))
+		cpuLimit, _ := strconv.Atoi(r.FormValue("cpu_limit"))
+		ramLimitMB, _ := strconv.Atoi(r.FormValue("ram_limit_mb"))
+		diskLimitMB, _ := strconv.Atoi(r.FormValue("disk_limit_mb"))
+		if err := h.service.UpdateUserQuotas(ctx, id, r.FormValue("trust_level"), vmLimit, cpuLimit, ramLimitMB, diskLimitMB); err != nil {
+			h.renderUserDetail(w, r, principal, err.Error())
+			return
+		}
+		redirectTo = "/users/" + strconv.FormatInt(id, 10)
 	case strings.HasSuffix(path, "/keys") && strings.HasPrefix(path, "/users/"):
 		id := h.authorizedUserID(strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/keys"), principal)
 		if id == 0 {

@@ -40,8 +40,8 @@ func (d *DB) CreateFiresliceUser(ctx context.Context, handle, email, passwordBcr
 			return err
 		}
 		return tx.QueryRowContext(ctx,
-			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users WHERE id = ?`, id,
-		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, vm_limit, cpu_limit, ram_limit_mb, disk_limit_mb, created_at, updated_at FROM users WHERE id = ?`, id,
+		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.VMLimit, &user.CPULimit, &user.RAMLimitMB, &user.DiskLimitMB, &user.CreatedAt, &user.UpdatedAt)
 	})
 	if err != nil {
 		return nil, err
@@ -56,8 +56,8 @@ func (d *DB) GetFiresliceUser(ctx context.Context, id int64) (*User, error) {
 	var user User
 	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users WHERE id = ?`, id,
-		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, vm_limit, cpu_limit, ram_limit_mb, disk_limit_mb, created_at, updated_at FROM users WHERE id = ?`, id,
+		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.VMLimit, &user.CPULimit, &user.RAMLimitMB, &user.DiskLimitMB, &user.CreatedAt, &user.UpdatedAt)
 	})
 	if err != nil {
 		return nil, err
@@ -72,8 +72,8 @@ func (d *DB) GetFiresliceUserByHandle(ctx context.Context, handle string) (*User
 	var user User
 	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users WHERE handle = ?`, strings.TrimSpace(handle),
-		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt)
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, vm_limit, cpu_limit, ram_limit_mb, disk_limit_mb, created_at, updated_at FROM users WHERE handle = ?`, strings.TrimSpace(handle),
+		).Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.VMLimit, &user.CPULimit, &user.RAMLimitMB, &user.DiskLimitMB, &user.CreatedAt, &user.UpdatedAt)
 	})
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (d *DB) ListFiresliceUsers(ctx context.Context) ([]*User, error) {
 	users := make([]*User, 0)
 	err := d.ReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
-			`SELECT id, handle, email, password_bcrypt, role, trust_level, created_at, updated_at FROM users ORDER BY handle ASC, id ASC`,
+			`SELECT id, handle, email, password_bcrypt, role, trust_level, vm_limit, cpu_limit, ram_limit_mb, disk_limit_mb, created_at, updated_at FROM users ORDER BY handle ASC, id ASC`,
 		)
 		if err != nil {
 			return err
@@ -96,7 +96,7 @@ func (d *DB) ListFiresliceUsers(ctx context.Context) ([]*User, error) {
 		defer rows.Close()
 		for rows.Next() {
 			var user User
-			if err := rows.Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			if err := rows.Scan(&user.ID, &user.Handle, &user.Email, &user.PasswordBcrypt, &user.Role, &user.TrustLevel, &user.VMLimit, &user.CPULimit, &user.RAMLimitMB, &user.DiskLimitMB, &user.CreatedAt, &user.UpdatedAt); err != nil {
 				return err
 			}
 			if user.Role == "" {
@@ -219,6 +219,33 @@ func (d *DB) UpdateFiresliceUserPassword(ctx context.Context, userID int64, pass
 		res, err := tx.ExecContext(ctx,
 			`UPDATE users SET password_bcrypt = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
 			string(hash), userID,
+		)
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+}
+
+func (d *DB) UpdateFiresliceUserQuotas(ctx context.Context, userID int64, trustLevel string, vmLimit, cpuLimit, ramLimitMB, diskLimitMB int) error {
+	trustLevel = strings.TrimSpace(trustLevel)
+	if trustLevel == "" {
+		return fmt.Errorf("trust level is required")
+	}
+	if !IsValidTrustLevel(trustLevel) {
+		return fmt.Errorf("invalid trust level %q", trustLevel)
+	}
+	return d.WriteTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE users SET trust_level = ?, vm_limit = ?, cpu_limit = ?, ram_limit_mb = ?, disk_limit_mb = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+			trustLevel, vmLimit, cpuLimit, ramLimitMB, diskLimitMB, userID,
 		)
 		if err != nil {
 			return err

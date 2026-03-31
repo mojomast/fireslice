@@ -50,17 +50,17 @@ func TestUserEndpoints(t *testing.T) {
 	now := mustTime("2026-03-30T12:00:00Z")
 	users := &stubUsers{
 		listUsers: []*db.User{
-			{ID: 2, Handle: "zoe", Email: "zoe@example.com", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
-			{ID: 1, Handle: "alice", Email: "alice@example.com", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			{ID: 2, Handle: "zoe", Email: "zoe@example.com", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			{ID: 1, Handle: "alice", Email: "alice@example.com", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
 		},
 		getUser: map[int64]*db.User{
-			1: {ID: 1, Handle: "alice", Email: "alice@example.com", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			1: {ID: 1, Handle: "alice", Email: "alice@example.com", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
 		},
 		keysByUser: map[int64][]*db.SSHKey{
 			1: {{ID: 11, UserID: 1, PublicKey: testPublicKey, Fingerprint: "SHA256:abc", Comment: "macbook", CreatedAt: db.SQLiteTime{Time: now}}},
 			2: {},
 		},
-		createUserResult: &db.User{ID: 3, Handle: "bob", Email: "bob@example.com", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+		createUserResult: &db.User{ID: 3, Handle: "bob", Email: "bob@example.com", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
 		addKeyResult:     &db.SSHKey{ID: 12, UserID: 3, PublicKey: testPublicKey, Fingerprint: "SHA256:def", Comment: "laptop", CreatedAt: db.SQLiteTime{Time: now}},
 		deleteUserIDs:    map[int64]bool{},
 		deleteKeyIDs:     map[int64]bool{},
@@ -194,6 +194,16 @@ func TestUserEndpoints(t *testing.T) {
 		assertStatus(t, rec, http.StatusNoContent)
 	})
 
+	t.Run("update user quotas", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := jsonRequest(t, http.MethodPatch, basePath+"/users/1/quotas", map[string]any{"trust_level": "citizen", "vm_limit": 10, "cpu_limit": 4, "ram_limit_mb": 8192, "disk_limit_mb": 51200})
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusNoContent)
+		if users.updatedQuotaUserID != 1 || users.updatedTrustLevel != "citizen" {
+			t.Fatalf("quota update target = %d/%q", users.updatedQuotaUserID, users.updatedTrustLevel)
+		}
+	})
+
 	t.Run("delete user", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodDelete, basePath+"/users/1", nil)
@@ -228,7 +238,7 @@ func TestUserEndpoints(t *testing.T) {
 func TestVMEndpoints(t *testing.T) {
 	now := mustTime("2026-03-30T12:00:00Z")
 	users := &stubUsers{
-		getUser:    map[int64]*db.User{1: {ID: 1, Handle: "alice", Email: "alice@example.com", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}},
+		getUser:    map[int64]*db.User{1: {ID: 1, Handle: "alice", Email: "alice@example.com", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}},
 		keysByUser: map[int64][]*db.SSHKey{1: {{ID: 11, UserID: 1, PublicKey: testPublicKey, Fingerprint: "SHA256:abc", Comment: "macbook", CreatedAt: db.SQLiteTime{Time: now}}}},
 	}
 	vms := &stubVMs{
@@ -302,6 +312,17 @@ func TestVMEndpoints(t *testing.T) {
 		srv.ServeHTTP(rec, req)
 
 		assertStatus(t, rec, http.StatusUnprocessableEntity)
+	})
+
+	t.Run("create vm quota exceeded", func(t *testing.T) {
+		users.getUser[1].VMLimit = 1
+		vms.listVMs = []*db.VM{{ID: 20, UserID: 1, Name: "alpha", Status: "running", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}}
+		rec := httptest.NewRecorder()
+		req := jsonRequest(t, http.MethodPost, basePath+"/vms", map[string]any{"user_id": 1, "name": "extra", "image": "ussyuntu", "vcpu": 1, "memory_mb": 512, "disk_gb": 10, "expose_subdomain": false})
+		srv.ServeHTTP(rec, req)
+		assertStatus(t, rec, http.StatusConflict)
+		users.getUser[1].VMLimit = 0
+		vms.listVMs = []*db.VM{{ID: 21, UserID: 1, Name: "zeta", Status: "stopped", Image: "ussyuntu", VCPU: 1, MemoryMB: 512, DiskGB: 10, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}, {ID: 20, UserID: 1, Name: "alpha", Status: "running", Image: "ussyuntu", VCPU: 2, MemoryMB: 1024, DiskGB: 20, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}}
 	})
 
 	t.Run("create vm conflict", func(t *testing.T) {
@@ -417,10 +438,10 @@ func TestVMEndpoints(t *testing.T) {
 func TestUserScopedAuthorization(t *testing.T) {
 	now := mustTime("2026-03-30T12:00:00Z")
 	users := &stubUsers{
-		listUsers: []*db.User{{ID: 1, Handle: "alice", Email: "alice@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}, {ID: 2, Handle: "bob", Email: "bob@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}},
+		listUsers: []*db.User{{ID: 1, Handle: "alice", Email: "alice@example.com", Role: "user", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}, {ID: 2, Handle: "bob", Email: "bob@example.com", Role: "user", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}}},
 		getUser: map[int64]*db.User{
-			1: {ID: 1, Handle: "alice", Email: "alice@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
-			2: {ID: 2, Handle: "bob", Email: "bob@example.com", Role: "user", TrustLevel: "user", CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			1: {ID: 1, Handle: "alice", Email: "alice@example.com", Role: "user", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
+			2: {ID: 2, Handle: "bob", Email: "bob@example.com", Role: "user", TrustLevel: "citizen", VMLimit: 10, CPULimit: 8, RAMLimitMB: 8192, DiskLimitMB: 51200, CreatedAt: db.SQLiteTime{Time: now}, UpdatedAt: db.SQLiteTime{Time: now}},
 		},
 		keysByUser:    map[int64][]*db.SSHKey{1: {}, 2: {}},
 		deleteKeyIDs:  map[int64]bool{},
@@ -527,17 +548,19 @@ func TestUserScopedAuthorization(t *testing.T) {
 }
 
 type stubUsers struct {
-	listUsers        []*db.User
-	getUser          map[int64]*db.User
-	keysByUser       map[int64][]*db.SSHKey
-	createUserResult *db.User
-	createUserErr    error
-	addKeyResult     *db.SSHKey
-	addKeyErr        error
-	createUserCalls  int
-	addKeyCalls      int
-	deleteUserIDs    map[int64]bool
-	deleteKeyIDs     map[int64]bool
+	listUsers          []*db.User
+	getUser            map[int64]*db.User
+	keysByUser         map[int64][]*db.SSHKey
+	createUserResult   *db.User
+	createUserErr      error
+	addKeyResult       *db.SSHKey
+	addKeyErr          error
+	createUserCalls    int
+	addKeyCalls        int
+	deleteUserIDs      map[int64]bool
+	deleteKeyIDs       map[int64]bool
+	updatedQuotaUserID int64
+	updatedTrustLevel  string
 }
 
 func (s *stubUsers) CreateUser(_ context.Context, handle, email, _ string, role string) (*db.User, error) {
@@ -594,6 +617,21 @@ func (s *stubUsers) UpdatePassword(_ context.Context, id int64, _ string) error 
 	if _, ok := s.getUser[id]; !ok {
 		return sql.ErrNoRows
 	}
+	return nil
+}
+
+func (s *stubUsers) UpdateQuotas(_ context.Context, userID int64, trustLevel string, vmLimit, cpuLimit, ramLimitMB, diskLimitMB int) error {
+	if _, ok := s.getUser[userID]; !ok {
+		return sql.ErrNoRows
+	}
+	s.updatedQuotaUserID = userID
+	s.updatedTrustLevel = trustLevel
+	user := s.getUser[userID]
+	user.TrustLevel = trustLevel
+	user.VMLimit = vmLimit
+	user.CPULimit = cpuLimit
+	user.RAMLimitMB = ramLimitMB
+	user.DiskLimitMB = diskLimitMB
 	return nil
 }
 

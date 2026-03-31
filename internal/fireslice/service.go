@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/mojomast/fireslice/internal/db"
 	"github.com/mojomast/fireslice/internal/vm"
@@ -29,6 +30,9 @@ func NewService(users UserStore, vms VMStore, vmRun VMRuntime, routes RouteManag
 func (s *Service) CreateVM(ctx context.Context, input CreateVMInput) (*db.VM, error) {
 	if s.VMs == nil {
 		return nil, fmt.Errorf("vm store unavailable")
+	}
+	if err := s.validateCreateVMResources(ctx, input); err != nil {
+		return nil, err
 	}
 	vmRecord, err := s.VMs.CreateVMRecord(ctx, input)
 	if err != nil {
@@ -63,6 +67,72 @@ func (s *Service) CreateVM(ctx context.Context, input CreateVMInput) (*db.VM, er
 
 	_ = s.logAudit(ctx, "vm.created", "vm", vmRecord.ID, vmRecord.Name)
 	return s.VMs.GetVM(ctx, vmRecord.ID)
+}
+
+func (s *Service) validateCreateVMResources(ctx context.Context, input CreateVMInput) error {
+	if s.Users == nil || s.VMs == nil {
+		return nil
+	}
+	user, err := s.Users.GetUser(ctx, input.UserID)
+	if err != nil {
+		return err
+	}
+	vms, err := s.VMs.ListVMsByUser(ctx, input.UserID)
+	if err != nil {
+		return err
+	}
+	totalCPU := input.VCPU
+	totalRAMMB := input.MemoryMB
+	totalDiskMB := input.DiskGB * 1024
+	for _, existing := range vms {
+		totalCPU += existing.VCPU
+		totalRAMMB += existing.MemoryMB
+		totalDiskMB += existing.DiskGB * 1024
+	}
+	if user.VMLimit >= 0 && len(vms) >= user.VMLimit {
+		return fmt.Errorf("vm quota exceeded")
+	}
+	if user.CPULimit >= 0 && totalCPU > user.CPULimit {
+		return fmt.Errorf("cpu quota exceeded")
+	}
+	if user.RAMLimitMB >= 0 && totalRAMMB > user.RAMLimitMB {
+		return fmt.Errorf("memory quota exceeded")
+	}
+	if user.DiskLimitMB >= 0 && totalDiskMB > user.DiskLimitMB {
+		return fmt.Errorf("disk quota exceeded")
+	}
+	return nil
+}
+
+func (s *Service) UpdateUserQuotas(ctx context.Context, userID int64, trustLevel string, vmLimit, cpuLimit, ramLimitMB, diskLimitMB int) error {
+	if s.Users == nil {
+		return fmt.Errorf("user store unavailable")
+	}
+	trustLevel = strings.TrimSpace(trustLevel)
+	if trustLevel == "" {
+		return fmt.Errorf("trust level is required")
+	}
+	if !db.IsValidTrustLevel(trustLevel) {
+		return fmt.Errorf("invalid trust level %q", trustLevel)
+	}
+	limits := []struct {
+		name  string
+		value int
+	}{
+		{name: "vm_limit", value: vmLimit},
+		{name: "cpu_limit", value: cpuLimit},
+		{name: "ram_limit_mb", value: ramLimitMB},
+		{name: "disk_limit_mb", value: diskLimitMB},
+	}
+	for _, limit := range limits {
+		if limit.value == 0 || limit.value < -1 {
+			return fmt.Errorf("%s must be positive or -1", limit.name)
+		}
+	}
+	if err := s.Users.UpdateQuotas(ctx, userID, trustLevel, vmLimit, cpuLimit, ramLimitMB, diskLimitMB); err != nil {
+		return err
+	}
+	return s.logAudit(ctx, "user.quotas_updated", "user", userID, trustLevel)
 }
 
 func (s *Service) StartVM(ctx context.Context, id int64) error {
@@ -298,6 +368,10 @@ func (s *DBUserStore) DeleteUser(ctx context.Context, id int64) error {
 
 func (s *DBUserStore) UpdatePassword(ctx context.Context, userID int64, password string) error {
 	return s.DB.UpdateFiresliceUserPassword(ctx, userID, password)
+}
+
+func (s *DBUserStore) UpdateQuotas(ctx context.Context, userID int64, trustLevel string, vmLimit, cpuLimit, ramLimitMB, diskLimitMB int) error {
+	return s.DB.UpdateFiresliceUserQuotas(ctx, userID, trustLevel, vmLimit, cpuLimit, ramLimitMB, diskLimitMB)
 }
 
 func (s *DBUserStore) AddSSHKey(ctx context.Context, userID int64, publicKey, label string) (*db.SSHKey, error) {

@@ -80,6 +80,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("POST "+basePath+"/users/{id}/keys", h.withAuth(http.HandlerFunc(h.handleAddUserKey)))
 	mux.Handle("DELETE "+basePath+"/users/{id}/keys/{keyID}", h.withAuth(http.HandlerFunc(h.handleDeleteUserKey)))
 	mux.Handle("POST "+basePath+"/users/{id}/password", h.withAuth(http.HandlerFunc(h.handleUpdateUserPassword)))
+	mux.Handle("PATCH "+basePath+"/users/{id}/quotas", h.withAuth(http.HandlerFunc(h.handleUpdateUserQuotas)))
 	mux.Handle("GET "+basePath+"/vms", h.withAuth(http.HandlerFunc(h.handleListVMs)))
 	mux.Handle("POST "+basePath+"/vms", h.withAuth(http.HandlerFunc(h.handleCreateVM)))
 	mux.Handle("GET "+basePath+"/vms/{id}", h.withAuth(http.HandlerFunc(h.handleGetVM)))

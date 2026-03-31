@@ -34,6 +34,7 @@ type UserStore interface {
 	ListUsers(ctx context.Context) ([]*db.User, error)
 	DeleteUser(ctx context.Context, id int64) error
 	UpdatePassword(ctx context.Context, userID int64, password string) error
+	UpdateQuotas(ctx context.Context, userID int64, trustLevel string, vmLimit, cpuLimit, ramLimitMB, diskLimitMB int) error
 	AddSSHKey(ctx context.Context, userID int64, publicKey, label string) (*db.SSHKey, error)
 	DeleteSSHKey(ctx context.Context, userID, keyID int64) error
 	ListSSHKeys(ctx context.Context, userID int64) ([]*db.SSHKey, error)

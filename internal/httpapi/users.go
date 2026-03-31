@@ -14,20 +14,33 @@ type createUserRequest struct {
 	FirstKey *userKeyRequest `json:"first_key"`
 }
 
+type updateUserQuotasRequest struct {
+	TrustLevel  string `json:"trust_level"`
+	VMLimit     int    `json:"vm_limit"`
+	CPULimit    int    `json:"cpu_limit"`
+	RAMLimitMB  int    `json:"ram_limit_mb"`
+	DiskLimitMB int    `json:"disk_limit_mb"`
+}
+
 type userKeyRequest struct {
 	PublicKey string `json:"public_key"`
 	Label     string `json:"label"`
 }
 
 type userSummary struct {
-	ID         int64  `json:"id"`
-	Handle     string `json:"handle"`
-	Email      string `json:"email"`
-	TrustLevel string `json:"trust_level"`
-	KeyCount   int    `json:"key_count"`
-	VMCount    int    `json:"vm_count"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
+	ID          int64  `json:"id"`
+	Handle      string `json:"handle"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	TrustLevel  string `json:"trust_level"`
+	VMLimit     int    `json:"vm_limit"`
+	CPULimit    int    `json:"cpu_limit"`
+	RAMLimitMB  int    `json:"ram_limit_mb"`
+	DiskLimitMB int    `json:"disk_limit_mb"`
+	KeyCount    int    `json:"key_count"`
+	VMCount     int    `json:"vm_count"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type userKeyResponse struct {
@@ -40,14 +53,19 @@ type userKeyResponse struct {
 }
 
 type userDetailResponse struct {
-	ID         int64             `json:"id"`
-	Handle     string            `json:"handle"`
-	Email      string            `json:"email"`
-	TrustLevel string            `json:"trust_level"`
-	VMCount    int               `json:"vm_count"`
-	CreatedAt  string            `json:"created_at"`
-	UpdatedAt  string            `json:"updated_at"`
-	Keys       []userKeyResponse `json:"keys"`
+	ID          int64             `json:"id"`
+	Handle      string            `json:"handle"`
+	Email       string            `json:"email"`
+	Role        string            `json:"role"`
+	TrustLevel  string            `json:"trust_level"`
+	VMLimit     int               `json:"vm_limit"`
+	CPULimit    int               `json:"cpu_limit"`
+	RAMLimitMB  int               `json:"ram_limit_mb"`
+	DiskLimitMB int               `json:"disk_limit_mb"`
+	VMCount     int               `json:"vm_count"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
+	Keys        []userKeyResponse `json:"keys"`
 }
 
 func (h *Handler) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -234,14 +252,19 @@ func (h *Handler) handleGetUser(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": userDetailResponse{
-			ID:         user.ID,
-			Handle:     user.Handle,
-			Email:      user.Email,
-			TrustLevel: user.TrustLevel,
-			VMCount:    vmCount,
-			CreatedAt:  formatTime(user.CreatedAt),
-			UpdatedAt:  formatTime(user.UpdatedAt),
-			Keys:       keyResponses,
+			ID:          user.ID,
+			Handle:      user.Handle,
+			Email:       user.Email,
+			Role:        user.Role,
+			TrustLevel:  user.TrustLevel,
+			VMLimit:     user.VMLimit,
+			CPULimit:    user.CPULimit,
+			RAMLimitMB:  user.RAMLimitMB,
+			DiskLimitMB: user.DiskLimitMB,
+			VMCount:     vmCount,
+			CreatedAt:   formatTime(user.CreatedAt),
+			UpdatedAt:   formatTime(user.UpdatedAt),
+			Keys:        keyResponses,
 		},
 	})
 }
@@ -426,16 +449,62 @@ func (h *Handler) handleUpdateUserPassword(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) handleUpdateUserQuotas(w http.ResponseWriter, r *http.Request) {
+	if h.service.Users == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable", "user service is unavailable", nil)
+		return
+	}
+	principal, ok := requirePrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !isAdmin(principal) {
+		writeError(w, http.StatusForbidden, "forbidden", "forbidden", nil)
+		return
+	}
+
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_path", err.Error(), nil)
+		return
+	}
+
+	var req updateUserQuotasRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON", nil)
+		return
+	}
+	if err := h.service.UpdateUserQuotas(r.Context(), id, req.TrustLevel, req.VMLimit, req.CPULimit, req.RAMLimitMB, req.DiskLimitMB); err != nil {
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, "not_found", "user not found", nil)
+			return
+		}
+		writeError(w, http.StatusUnprocessableEntity, "validation_failed", "request validation failed", map[string]string{"quotas": err.Error()})
+		return
+	}
+	if err := h.auditEvent(r.Context(), "user.quotas_updated", "user", id, req.TrustLevel); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to write audit log", nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func userToSummary(user *db.User, keyCount, vmCount int) userSummary {
 	return userSummary{
-		ID:         user.ID,
-		Handle:     user.Handle,
-		Email:      user.Email,
-		TrustLevel: user.TrustLevel,
-		KeyCount:   keyCount,
-		VMCount:    vmCount,
-		CreatedAt:  formatTime(user.CreatedAt),
-		UpdatedAt:  formatTime(user.UpdatedAt),
+		ID:          user.ID,
+		Handle:      user.Handle,
+		Email:       user.Email,
+		Role:        user.Role,
+		TrustLevel:  user.TrustLevel,
+		VMLimit:     user.VMLimit,
+		CPULimit:    user.CPULimit,
+		RAMLimitMB:  user.RAMLimitMB,
+		DiskLimitMB: user.DiskLimitMB,
+		KeyCount:    keyCount,
+		VMCount:     vmCount,
+		CreatedAt:   formatTime(user.CreatedAt),
+		UpdatedAt:   formatTime(user.UpdatedAt),
 	}
 }
 

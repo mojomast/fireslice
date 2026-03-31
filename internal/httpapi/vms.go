@@ -169,6 +169,10 @@ func (h *Handler) handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		ExposedPort:     req.ExposedPort,
 	})
 	if err != nil {
+		if err.Error() == "vm quota exceeded" || err.Error() == "cpu quota exceeded" || err.Error() == "memory quota exceeded" || err.Error() == "disk quota exceeded" {
+			writeError(w, http.StatusConflict, "conflict", err.Error(), nil)
+			return
+		}
 		if isConflictError(err) {
 			writeError(w, http.StatusConflict, "conflict", "VM name or subdomain already exists", nil)
 			return

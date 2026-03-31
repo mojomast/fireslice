@@ -21,7 +21,7 @@
     <button type="submit">Create user</button>
   </form>
   <table>
-    <thead><tr><th>Handle</th><th>Email</th><th>Role</th><th>Trust</th><th>Keys</th><th>VMs</th><th>Created</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Handle</th><th>Email</th><th>Role</th><th>Trust</th><th>Quota</th><th>Keys</th><th>VMs</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>
       {{range .Users}}
       <tr>
@@ -29,13 +29,14 @@
         <td>{{index . "email"}}</td>
         <td>{{index . "role"}}</td>
         <td>{{index . "trust_level"}}</td>
+        <td>{{index . "vm_limit"}} vm / {{index . "cpu_limit"}} cpu / {{index . "ram_limit_mb"}} mb / {{index . "disk_limit_mb"}} mb</td>
         <td>{{index . "key_count"}}</td>
         <td>{{index . "vm_count"}}</td>
         <td>{{index . "created_at"}}</td>
         <td><form method="post" action="/users/{{index . "id"}}/delete"><button type="submit">Delete</button></form></td>
       </tr>
       {{else}}
-      <tr><td colspan="8" class="muted">No users yet.</td></tr>
+      <tr><td colspan="9" class="muted">No users yet.</td></tr>
       {{end}}
     </tbody>
   </table>

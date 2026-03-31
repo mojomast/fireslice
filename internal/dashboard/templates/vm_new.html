@@ -10,6 +10,7 @@
 <main>
   {{template "nav" .}}
   <h1>Create VM</h1>
+  {{if .Quota}}<p>{{index .Quota "vm_used"}} / {{index .Quota "vm_limit"}} VMs, {{index .Quota "cpu_used"}} / {{index .Quota "cpu_limit"}} vCPU, {{index .Quota "ram_used_mb"}} / {{index .Quota "ram_limit_mb"}} MB RAM, {{index .Quota "disk_used_mb"}} / {{index .Quota "disk_limit_mb"}} MB disk</p>{{end}}
   <form method="post" action="/vms">
     <select name="user_id" required>
       {{range .Users}}<option value="{{index . "id"}}">{{index . "handle"}}</option>{{end}}

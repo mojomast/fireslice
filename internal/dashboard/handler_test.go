@@ -153,6 +153,9 @@ func (s *dashboardStubUsers) GetUserByHandle(context.Context, string) (*db.User,
 func (s *dashboardStubUsers) ListUsers(context.Context) ([]*db.User, error)       { return nil, nil }
 func (s *dashboardStubUsers) DeleteUser(context.Context, int64) error             { return nil }
 func (s *dashboardStubUsers) UpdatePassword(context.Context, int64, string) error { return nil }
+func (s *dashboardStubUsers) UpdateQuotas(context.Context, int64, string, int, int, int, int) error {
+	return nil
+}
 func (s *dashboardStubUsers) AddSSHKey(context.Context, int64, string, string) (*db.SSHKey, error) {
 	return nil, nil
 }

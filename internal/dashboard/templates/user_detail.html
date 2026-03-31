@@ -13,7 +13,26 @@
     <h1>{{index .User "handle"}}</h1>
     <p>{{index .User "email"}}</p>
     <p>{{index .User "role"}} / {{index .User "trust_level"}}</p>
+    <p>quota: {{index .User "vm_count"}} / {{index .User "vm_limit"}} VMs, {{index .User "cpu_used"}} / {{index .User "cpu_limit"}} vCPU, {{index .User "ram_used_mb"}} / {{index .User "ram_limit_mb"}} MB RAM, {{index .User "disk_used_mb"}} / {{index .User "disk_limit_mb"}} MB disk</p>
   </div>
+  {{if .IsAdmin}}
+  <div class="card">
+    <h2>Resource allocation</h2>
+    <form method="post" action="/users/{{index .User "id"}}/quotas">
+      <select name="trust_level">
+        <option value="newbie"{{if eq (index .User "trust_level") "newbie"}} selected{{end}}>newbie</option>
+        <option value="citizen"{{if eq (index .User "trust_level") "citizen"}} selected{{end}}>citizen</option>
+        <option value="operator"{{if eq (index .User "trust_level") "operator"}} selected{{end}}>operator</option>
+        <option value="admin"{{if eq (index .User "trust_level") "admin"}} selected{{end}}>admin</option>
+      </select>
+      <input type="text" name="vm_limit" value="{{index .User "vm_limit"}}" required>
+      <input type="text" name="cpu_limit" value="{{index .User "cpu_limit"}}" required>
+      <input type="text" name="ram_limit_mb" value="{{index .User "ram_limit_mb"}}" required>
+      <input type="text" name="disk_limit_mb" value="{{index .User "disk_limit_mb"}}" required>
+      <button type="submit">Update allocation</button>
+    </form>
+  </div>
+  {{end}}
   <div class="card">
     <h2>SSH keys</h2>
     <form method="post" action="/users/{{index .User "id"}}/keys">

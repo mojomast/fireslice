@@ -61,6 +61,10 @@ type User struct {
 	PasswordBcrypt string
 	Role           string
 	TrustLevel     string
+	VMLimit        int
+	CPULimit       int
+	RAMLimitMB     int
+	DiskLimitMB    int
 	CreatedAt      SQLiteTime
 	UpdatedAt      SQLiteTime
 }
