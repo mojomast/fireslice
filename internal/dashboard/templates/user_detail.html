@@ -33,16 +33,22 @@
   {{if .IsAdmin}}
   <div class="card">
     <h2>Resource allocation</h2>
+    <p class="muted">These are pooled limits, not dedicated host reservations. On this 4-vCPU host, users can share CPU through overcommit, so allocate based on expected contention rather than physical-core pinning.</p>
     <form method="post" action="/users/{{index .User "id"}}/quotas" class="stack-form">
+      <label>Trust level</label>
       <select name="trust_level">
         <option value="newbie"{{if eq (index .User "trust_level") "newbie"}} selected{{end}}>newbie</option>
         <option value="citizen"{{if eq (index .User "trust_level") "citizen"}} selected{{end}}>citizen</option>
         <option value="operator"{{if eq (index .User "trust_level") "operator"}} selected{{end}}>operator</option>
         <option value="admin"{{if eq (index .User "trust_level") "admin"}} selected{{end}}>admin</option>
       </select>
+      <label>Total VM count</label>
       <input type="text" name="vm_limit" value="{{index .User "vm_limit"}}" required>
+      <label>Total vCPU budget</label>
       <input type="text" name="cpu_limit" value="{{index .User "cpu_limit"}}" required>
+      <label>Total RAM budget (MB)</label>
       <input type="text" name="ram_limit_mb" value="{{index .User "ram_limit_mb"}}" required>
+      <label>Total disk budget (MB)</label>
       <input type="text" name="disk_limit_mb" value="{{index .User "disk_limit_mb"}}" required>
       <button type="submit">Update allocation</button>
     </form>

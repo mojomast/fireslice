@@ -22,8 +22,8 @@ func NewFileImageStore(path string) *FileImageStore {
 
 func DefaultImages() []ImageCatalogEntry {
 	return []ImageCatalogEntry{{
-		Name:        "ussyuntu",
-		Ref:         "ussyuntu",
+		Name:        "Ubuntu 24.04",
+		Ref:         "ubuntu:24.04",
 		Description: "Local default guest image",
 	}}
 }

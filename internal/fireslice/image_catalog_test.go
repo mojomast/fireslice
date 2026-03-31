@@ -15,7 +15,7 @@ func TestFileImageStoreDefaultsAndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(images) == 0 || images[0].Ref != "ussyuntu" {
+	if len(images) == 0 || images[0].Ref != "ubuntu:24.04" {
 		t.Fatalf("default images = %#v", images)
 	}
 
@@ -39,7 +39,7 @@ func TestFileImageStoreDefaultsAndCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(images) != 1 || images[0].Ref != "ussyuntu" {
+	if len(images) != 1 || images[0].Ref != "ubuntu:24.04" {
 		t.Fatalf("images after delete = %#v", images)
 	}
 }

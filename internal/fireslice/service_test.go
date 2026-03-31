@@ -68,7 +68,7 @@ func TestServiceUpdateUserQuotas(t *testing.T) {
 func TestServiceCreateVMRejectsUnknownImage(t *testing.T) {
 	users := &serviceStubUsers{get: map[int64]*db.User{1: {ID: 1, Handle: "alice", VMLimit: 3, CPULimit: 4, RAMLimitMB: 4096, DiskLimitMB: 40960}}}
 	vms := &serviceStubVMs{created: &db.VM{ID: 10, UserID: 1, Name: "alpha", Image: "custom", VCPU: 2, MemoryMB: 1024, DiskGB: 20}, get: map[int64]*db.VM{}, byUser: map[int64][]*db.VM{}}
-	service := &Service{Users: users, VMs: vms, VMRun: &serviceStubRuntime{}, Images: stubImageStore{images: []ImageCatalogEntry{{Name: "ussyuntu", Ref: "ussyuntu"}}}}
+	service := &Service{Users: users, VMs: vms, VMRun: &serviceStubRuntime{}, Images: stubImageStore{images: []ImageCatalogEntry{{Name: "Ubuntu 24.04", Ref: "ubuntu:24.04"}}}}
 
 	if _, err := service.CreateVM(context.Background(), CreateVMInput{UserID: 1, Name: "alpha", Image: "custom", VCPU: 2, MemoryMB: 1024, DiskGB: 20}); err == nil || err.Error() != "image is not available" {
 		t.Fatalf("expected image rejection, got %v", err)

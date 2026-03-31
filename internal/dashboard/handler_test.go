@@ -66,7 +66,7 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 			UpdatedAt:  db.SQLiteTime{Time: time.Now()},
 		}}},
 		VMs:    &dashboardStubVMs{},
-		Images: dashboardStubImages{images: []fireslice.ImageCatalogEntry{{Name: "ussyuntu", Ref: "ussyuntu", Description: "Default image"}}},
+		Images: dashboardStubImages{images: []fireslice.ImageCatalogEntry{{Name: "Ubuntu 24.04", Ref: "ubuntu:24.04", Description: "Default image"}}},
 	}, auth, map[string]string{"domain": "example.test"})
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 		if !strings.Contains(body, "<select name=\"image\" required>") {
 			t.Fatalf("vm new page missing image select: %s", body)
 		}
-		if !strings.Contains(body, "ussyuntu - ussyuntu") {
+		if !strings.Contains(body, "Ubuntu 24.04 - ubuntu:24.04") {
 			t.Fatalf("vm new page missing image option: %s", body)
 		}
 	})
