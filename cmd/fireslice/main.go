@@ -20,6 +20,7 @@ import (
 	"github.com/mojomast/fireslice/internal/httpapi"
 	"github.com/mojomast/fireslice/internal/proxy"
 	"github.com/mojomast/fireslice/internal/sessionauth"
+	"github.com/mojomast/fireslice/internal/sshgate"
 	"github.com/mojomast/fireslice/internal/vm"
 )
 
@@ -49,15 +50,21 @@ func main() {
 	if err := database.Migrate(ctx); err != nil {
 		log.Fatalf("migrate database: %v", err)
 	}
+	guestSSHPublicKey, err := sshgate.EnsureKeypair(cfg.GuestSSHKeyPath)
+	if err != nil {
+		log.Fatalf("init guest ssh keypair: %v", err)
+	}
 
 	var vmManager *vm.Manager
 	vmManager, err = vm.NewManager(database, &vm.ManagerConfig{
-		DataDir:        cfg.DataDir,
-		FirecrackerBin: cfg.FirecrackerBin,
-		KernelPath:     cfg.KernelPath,
-		InitrdPath:     cfg.InitrdPath,
-		BridgeName:     cfg.NetworkBridge,
-		SubnetCIDR:     cfg.NetworkSubnet,
+		DataDir:           cfg.DataDir,
+		FirecrackerBin:    cfg.FirecrackerBin,
+		KernelPath:        cfg.KernelPath,
+		InitrdPath:        cfg.InitrdPath,
+		BridgeName:        cfg.NetworkBridge,
+		SubnetCIDR:        cfg.NetworkSubnet,
+		Domain:            cfg.Domain,
+		GuestSSHPublicKey: guestSSHPublicKey,
 	}, logger.With("component", "vm"))
 	if err != nil {
 		logger.Warn("VM manager unavailable; continuing without provisioning support", "error", err)
@@ -107,12 +114,15 @@ func main() {
 	var dashboardHandler *dashboard.Handler
 	if authMgr != nil {
 		dashboardHandler, err = dashboard.New(service, authMgr, map[string]string{
-			"domain":        cfg.Domain,
-			"http_addr":     cfg.HTTPListenAddr,
-			"db_path":       cfg.DBPath,
-			"metadata_addr": cfg.MetadataAddr,
-			"bridge":        cfg.NetworkBridge,
-			"subnet":        cfg.NetworkSubnet,
+			"domain":             cfg.Domain,
+			"http_addr":          cfg.HTTPListenAddr,
+			"bastion_ssh_addr":   cfg.BastionSSHAddr,
+			"ssh_relay_sock":     cfg.SSHRelaySock,
+			"guest_ssh_key_path": cfg.GuestSSHKeyPath,
+			"db_path":            cfg.DBPath,
+			"metadata_addr":      cfg.MetadataAddr,
+			"bridge":             cfg.NetworkBridge,
+			"subnet":             cfg.NetworkSubnet,
 		})
 		if err != nil {
 			log.Fatalf("init dashboard: %v", err)
@@ -121,10 +131,22 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithCancel(ctx)
 	defer shutdownCancel()
+	relaySrv := &sshgate.RelayServer{Sock: cfg.SSHRelaySock, Subnet: cfg.NetworkSubnet, Logger: logger.With("component", "ssh-relay")}
+	controlSrv := &sshgate.ControlServer{DB: database, Sock: cfg.SSHControlSock, Logger: logger.With("component", "ssh-control")}
 
 	go func() {
 		if err := metaSrv.Start(shutdownCtx); err != nil {
 			logger.Error("metadata server exited", "error", err)
+		}
+	}()
+	go func() {
+		if err := relaySrv.Serve(shutdownCtx); err != nil {
+			logger.Error("ssh relay exited", "error", err)
+		}
+	}()
+	go func() {
+		if err := controlSrv.Serve(shutdownCtx); err != nil {
+			logger.Error("ssh control exited", "error", err)
 		}
 	}()
 

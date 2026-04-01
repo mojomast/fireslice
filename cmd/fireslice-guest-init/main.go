@@ -109,6 +109,9 @@ func main() {
 	if err := os.Chdir(cfg.WorkingDir); err != nil {
 		fatal(err)
 	}
+	if err := startGuestSSH(); err != nil {
+		logf("guest ssh setup failed: %v", err)
+	}
 	if len(cfg.Command) == 0 {
 		cfg.Command = []string{"/bin/sh"}
 	}
@@ -122,6 +125,26 @@ func main() {
 	if err := syscall.Exec(argv0, cfg.Command, env); err != nil {
 		fatal(err)
 	}
+}
+
+func startGuestSSH() error {
+	sshBin := "/usr/local/bin/fireslice-guest-ssh"
+	if _, err := os.Stat(sshBin); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	procAttr := &syscall.ProcAttr{
+		Dir:   "/",
+		Env:   append(os.Environ(), "HOME=/home/ussycode", "USER=ussycode", "LOGNAME=ussycode"),
+		Files: []uintptr{0, 1, 2},
+	}
+	if _, err := syscall.ForkExec(sshBin, []string{sshBin}, procAttr); err != nil {
+		return err
+	}
+	logf("started guest ssh helper")
+	return nil
 }
 
 func loadConfig(path string) (*runtimeConfig, error) {

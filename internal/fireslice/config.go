@@ -13,6 +13,12 @@ import (
 type Config struct {
 	Domain          string
 	HTTPListenAddr  string
+	SSHRelaySock    string
+	SSHControlSock  string
+	BastionHTTPAddr string
+	BastionSSHAddr  string
+	SSHHostKeyPath  string
+	GuestSSHKeyPath string
 	DataDir         string
 	DBPath          string
 	CaddyAdminAddr  string
@@ -33,6 +39,12 @@ func DefaultConfig() *Config {
 	return &Config{
 		Domain:          envOrDefault("FIRESLICE_DOMAIN", "local.test"),
 		HTTPListenAddr:  envOrDefault("FIRESLICE_HTTP_ADDR", ":9090"),
+		SSHRelaySock:    envOrDefault("FIRESLICE_SSH_RELAY_SOCK", filepath.Join(dataDir, "ssh-relay.sock")),
+		SSHControlSock:  envOrDefault("FIRESLICE_SSH_CONTROL_SOCK", filepath.Join(dataDir, "ssh-control.sock")),
+		BastionHTTPAddr: envOrDefault("FIRESLICE_BASTION_HTTP_ADDR", ":9191"),
+		BastionSSHAddr:  envOrDefault("FIRESLICE_BASTION_SSH_ADDR", ":2222"),
+		SSHHostKeyPath:  envOrDefault("FIRESLICE_SSH_HOST_KEY", "/var/lib/fireslice-bastion/ssh_host_ed25519_key"),
+		GuestSSHKeyPath: envOrDefault("FIRESLICE_GUEST_SSH_KEY", filepath.Join(dataDir, "guest_control_ed25519")),
 		DataDir:         dataDir,
 		DBPath:          envOrDefault("FIRESLICE_DB_PATH", filepath.Join(dataDir, "fireslice.db")),
 		CaddyAdminAddr:  envOrDefault("FIRESLICE_CADDY_ADMIN", "http://localhost:2019"),
@@ -51,6 +63,12 @@ func DefaultConfig() *Config {
 func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.Domain, "domain", c.Domain, "Base domain for VM subdomains")
 	fs.StringVar(&c.HTTPListenAddr, "http-addr", c.HTTPListenAddr, "HTTP listen address for dashboard and admin API")
+	fs.StringVar(&c.SSHRelaySock, "ssh-relay-sock", c.SSHRelaySock, "Unix socket for restricted slice SSH relay")
+	fs.StringVar(&c.SSHControlSock, "ssh-control-sock", c.SSHControlSock, "Unix socket for bastion control-plane lookups")
+	fs.StringVar(&c.BastionHTTPAddr, "bastion-http-addr", c.BastionHTTPAddr, "HTTP listen address for isolated SSH bastion")
+	fs.StringVar(&c.BastionSSHAddr, "bastion-ssh-addr", c.BastionSSHAddr, "SSH listen address for isolated bastion")
+	fs.StringVar(&c.SSHHostKeyPath, "ssh-host-key", c.SSHHostKeyPath, "SSH bastion host key file path")
+	fs.StringVar(&c.GuestSSHKeyPath, "guest-ssh-key", c.GuestSSHKeyPath, "Guest control SSH key file path")
 	fs.StringVar(&c.DataDir, "data-dir", c.DataDir, "Root data directory")
 	fs.StringVar(&c.DBPath, "db", c.DBPath, "SQLite database path")
 	fs.StringVar(&c.CaddyAdminAddr, "caddy-api", c.CaddyAdminAddr, "Caddy admin API URL")

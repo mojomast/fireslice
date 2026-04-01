@@ -8,6 +8,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o /out/fireslice ./cmd/fireslice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags='-s -w' -o /out/fireslice-guest-init ./cmd/fireslice-guest-init
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags='-s -w' -o /out/fireslice-guest-ssh ./cmd/fireslice-guest-ssh
 
 FROM debian:bookworm-slim
 
@@ -24,6 +25,7 @@ RUN apt-get update \
 
 COPY --from=build /out/fireslice /usr/local/bin/fireslice
 COPY --from=build /out/fireslice-guest-init /usr/local/bin/fireslice-guest-init
+COPY --from=build /out/fireslice-guest-ssh /usr/local/bin/fireslice-guest-ssh
 
 EXPOSE 9090 8083
 

@@ -20,6 +20,7 @@ const defaultDataDiskGB = 5
 const provisioningTimeout = 10 * time.Minute
 const firecrackerBootGracePeriod = 20 * time.Second
 const guestInitHostPath = "/usr/local/bin/fireslice-guest-init"
+const guestSSHHostPath = "/usr/local/bin/fireslice-guest-ssh"
 
 func provisioningContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), provisioningTimeout)
@@ -63,13 +64,14 @@ const ussycodeOpencodeSkill = "---\nname: ussycode-web-proxy\ndescription: Expos
 // Manager orchestrates VM lifecycle: image pulling, rootfs creation,
 // network allocation, Firecracker boot, and cleanup.
 type Manager struct {
-	db      *db.DB
-	images  *ImageManager
-	network NetworkBackend
-	fc      *FirecrackerBackend
-	dataDir string
-	domain  string
-	logger  *slog.Logger
+	db                    *db.DB
+	images                *ImageManager
+	network               NetworkBackend
+	fc                    *FirecrackerBackend
+	dataDir               string
+	domain                string
+	guestSSHAuthorizedKey string
+	logger                *slog.Logger
 
 	// Track running VMs for shutdown/cleanup
 	mu      sync.RWMutex
@@ -87,13 +89,14 @@ type RunningVM struct {
 
 // ManagerConfig holds the configuration for the VM manager.
 type ManagerConfig struct {
-	DataDir        string // base dir for all VM data
-	FirecrackerBin string
-	KernelPath     string
-	InitrdPath     string
-	BridgeName     string
-	SubnetCIDR     string
-	Domain         string
+	DataDir           string // base dir for all VM data
+	FirecrackerBin    string
+	KernelPath        string
+	InitrdPath        string
+	BridgeName        string
+	SubnetCIDR        string
+	Domain            string
+	GuestSSHPublicKey string
 }
 
 // NewManager creates a new VM manager with all subsystems initialized.
@@ -138,14 +141,15 @@ func NewManager(database *db.DB, cfg *ManagerConfig, logger *slog.Logger) (*Mana
 	}
 
 	mgr := &Manager{
-		db:      database,
-		images:  images,
-		network: network,
-		fc:      fc,
-		dataDir: cfg.DataDir,
-		domain:  cfg.Domain,
-		logger:  logger,
-		running: make(map[int64]*RunningVM),
+		db:                    database,
+		images:                images,
+		network:               network,
+		fc:                    fc,
+		dataDir:               cfg.DataDir,
+		domain:                cfg.Domain,
+		guestSSHAuthorizedKey: strings.TrimSpace(cfg.GuestSSHPublicKey),
+		logger:                logger,
+		running:               make(map[int64]*RunningVM),
 	}
 	if err := mgr.ReconcilePersistedState(context.Background()); err != nil {
 		logger.Warn("failed to reconcile persisted VM state", "error", err)
@@ -235,19 +239,16 @@ func (m *Manager) SeedAuthorizedKeys(ctx context.Context, vmID int64, keys []str
 		return err
 	}
 
-	if len(keys) == 0 {
+	allKeys := append([]string{}, keys...)
+	if m.guestSSHAuthorizedKey != "" {
+		allKeys = append(allKeys, m.guestSSHAuthorizedKey)
+	}
+	if len(allKeys) == 0 {
 		return nil
 	}
 
-	homeExists, err := ext4PathExists(ctx, rootfs, "/home/ussycode")
-	if err != nil {
-		return fmt.Errorf("stat guest home: %w", err)
-	}
-	if !homeExists {
-		m.logger.Warn("skipping authorized keys for guest without /home/ussycode",
-			"vm_id", vmID,
-		)
-		return nil
+	if err := m.ensureGuestSSHUser(ctx, rootfs); err != nil {
+		return err
 	}
 	if err := mkdirExt4(ctx, rootfs, "/home/ussycode/.ssh"); err != nil {
 		return err
@@ -258,7 +259,7 @@ func (m *Manager) SeedAuthorizedKeys(ctx context.Context, vmID int64, keys []str
 		return fmt.Errorf("create temp keys file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	content := strings.Join(keys, "\n") + "\n"
+	content := strings.Join(allKeys, "\n") + "\n"
 	if _, err := tmpFile.WriteString(content); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
@@ -291,6 +292,9 @@ func (m *Manager) SeedAuthorizedKeys(ctx context.Context, vmID int64, keys []str
 }
 
 func (m *Manager) configureGuestSSH(ctx context.Context, rootfs string) error {
+	if err := m.ensureGuestSSHUser(ctx, rootfs); err != nil {
+		return err
+	}
 	if err := rewriteExt4FileIfExists(ctx, rootfs, "/etc/ssh/sshd_config", 0, 0, "0100644", func(s string) string {
 		if strings.Contains(s, "\nUsePAM yes\n") {
 			s = strings.ReplaceAll(s, "\nUsePAM yes\n", "\nUsePAM no\n")
@@ -339,8 +343,67 @@ func (m *Manager) configureGuestSSH(ctx context.Context, rootfs string) error {
 	if err := m.installOpencodeRuntimeFiles(ctx, rootfs); err != nil {
 		return fmt.Errorf("install opencode runtime files: %w", err)
 	}
+	if err := m.installGuestSSHRuntime(ctx, rootfs); err != nil {
+		return fmt.Errorf("install guest ssh runtime: %w", err)
+	}
 
 	return nil
+}
+
+func (m *Manager) ensureGuestSSHUser(ctx context.Context, rootfs string) error {
+	if err := mkdirExt4(ctx, rootfs, "/home"); err != nil {
+		return err
+	}
+	if err := mkdirExt4(ctx, rootfs, "/home/ussycode"); err != nil {
+		return err
+	}
+	if err := writeExt4FileIfMissing(ctx, rootfs, "/etc/passwd", "root:x:0:0:root:/root:/bin/sh\nussycode:x:1001:1001:fireslice:/home/ussycode:/bin/sh\n", 0, 0, "0100644"); err != nil {
+		return err
+	}
+	if err := appendLineIfMissing(ctx, rootfs, "/etc/passwd", "ussycode:x:1001:1001:fireslice:/home/ussycode:/bin/sh", 0, 0, "0100644"); err != nil {
+		return err
+	}
+	if err := writeExt4FileIfMissing(ctx, rootfs, "/etc/group", "root:x:0:\nussycode:x:1001:\n", 0, 0, "0100644"); err != nil {
+		return err
+	}
+	if err := appendLineIfMissing(ctx, rootfs, "/etc/group", "ussycode:x:1001:", 0, 0, "0100644"); err != nil {
+		return err
+	}
+	if err := writeExt4FileIfMissing(ctx, rootfs, "/etc/shadow", "root:*:19793:0:99999:7:::\nussycode:*:19793:0:99999:7:::\n", 0, 42, "0100640"); err != nil {
+		return err
+	}
+	if err := appendLineIfMissing(ctx, rootfs, "/etc/shadow", "ussycode:*:19793:0:99999:7:::", 0, 42, "0100640"); err != nil {
+		return err
+	}
+	commands := []string{
+		"set_inode_field /home/ussycode uid 1001",
+		"set_inode_field /home/ussycode gid 1001",
+		"set_inode_field /home/ussycode mode 040755",
+	}
+	for _, cmdText := range commands {
+		cmd := exec.CommandContext(ctx, "debugfs", "-w", "-R", cmdText, rootfs)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("debugfs %q: %s: %w", cmdText, string(out), err)
+		}
+	}
+	return nil
+}
+
+func (m *Manager) installGuestSSHRuntime(ctx context.Context, rootfs string) error {
+	sshBin, err := os.ReadFile(guestSSHHostPath)
+	if err != nil {
+		return fmt.Errorf("read guest ssh binary: %w", err)
+	}
+	if err := writeExt4Bytes(ctx, rootfs, "/usr/local/bin/fireslice-guest-ssh", sshBin, 0, 0, "0100755"); err != nil {
+		return err
+	}
+	if err := mkdirExt4(ctx, rootfs, "/etc/ssh"); err != nil {
+		return err
+	}
+	if m.guestSSHAuthorizedKey == "" {
+		return nil
+	}
+	return writeExt4File(ctx, rootfs, "/etc/ssh/fireslice_control_authorized_key", m.guestSSHAuthorizedKey+"\n", 0, 0, "0100600")
 }
 
 func (m *Manager) installGuestRuntime(ctx context.Context, rootfs string, cfg createStartConfig, imgCfg *ImageConfig) error {
@@ -486,6 +549,32 @@ func rewriteExt4FileIfExists(ctx context.Context, rootfs, guestPath string, uid,
 		return nil
 	}
 	return rewriteExt4File(ctx, rootfs, guestPath, uid, gid, mode, mutate)
+}
+
+func writeExt4FileIfMissing(ctx context.Context, rootfs, guestPath, content string, uid, gid int, mode string) error {
+	exists, err := ext4PathExists(ctx, rootfs, guestPath)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	return writeExt4File(ctx, rootfs, guestPath, content, uid, gid, mode)
+}
+
+func appendLineIfMissing(ctx context.Context, rootfs, guestPath, line string, uid, gid int, mode string) error {
+	return rewriteExt4FileIfExists(ctx, rootfs, guestPath, uid, gid, mode, func(s string) string {
+		needle := strings.TrimSpace(line)
+		for _, existing := range strings.Split(s, "\n") {
+			if strings.TrimSpace(existing) == needle {
+				return s
+			}
+		}
+		if !strings.HasSuffix(s, "\n") {
+			s += "\n"
+		}
+		return s + line + "\n"
+	})
 }
 
 func writeExt4File(ctx context.Context, rootfs, guestPath, content string, uid, gid int, mode string) error {

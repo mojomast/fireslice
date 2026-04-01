@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"embed"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -56,6 +57,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /users", protected)
 	mux.Handle("GET /users/{id}", protected)
 	mux.Handle("GET /vms/{id}", protected)
+	mux.Handle("GET /vms/{id}/terminal", protected)
+	mux.Handle("POST /vms/{id}/terminal/stream", protected)
 	mux.Handle("GET /vms/new", protected)
 	mux.Handle("GET /images", protected)
 	mux.Handle("GET /settings", protected)
@@ -116,6 +119,10 @@ func (h *Handler) routeProtected(w http.ResponseWriter, r *http.Request) {
 		h.renderUserDetail(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/vms/new":
 		h.renderVMNew(w, r, principal, "")
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/terminal"):
+		h.renderTerminal(w, r, principal)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/terminal/stream"):
+		h.handleTerminalStream(w, r, principal)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/vms/"):
 		h.renderVMDetail(w, r, principal, "")
 	case r.Method == http.MethodGet && r.URL.Path == "/images":
@@ -195,9 +202,16 @@ func (h *Handler) renderVMDetail(w http.ResponseWriter, r *http.Request, princip
 		publicURL = "https://" + vm.Subdomain.String + "." + domain
 	}
 	sshTarget := ""
-	sshHint := "SSH currently requires a real reachable ingress path. The private 10.x guest IP is host-internal and not directly reachable by users."
+	sshHint := "Add an SSH key to your account, then connect through the bastion. The slice itself stays on the private 10.x network."
 	stateHint := "The VM record exists, but it is not running yet. Start it before trying to connect."
 	if vm.Status == "running" {
+		bastionAddr := h.config["bastion_ssh_addr"]
+		if bastionAddr == "" {
+			bastionAddr = ":2222"
+		}
+		sshHost := "ssh." + domain
+		sshPort := strings.TrimPrefix(bastionAddr, ":")
+		sshTarget = "ssh -p " + sshPort + " " + vm.Name + "@" + sshHost
 		stateHint = "The VM is running. If the public URL returns 502, the guest service is not reachable on the exposed port yet."
 	}
 	_ = h.templates.ExecuteTemplate(w, "vm_detail.html", map[string]any{
@@ -216,6 +230,7 @@ func (h *Handler) renderVMDetail(w http.ResponseWriter, r *http.Request, princip
 			"public_url":     publicURL,
 			"ssh_target":     sshTarget,
 			"ssh_hint":       sshHint,
+			"terminal_url":   fmt.Sprintf("/vms/%d/terminal", vm.ID),
 			"created_at":     vm.CreatedAt.Time.Format("2006-01-02 15:04"),
 			"state_hint":     stateHint,
 			"expose_enabled": vm.ExposeSubdomain,

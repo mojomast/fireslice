@@ -125,6 +125,27 @@ code {
   border: 1px solid rgba(248, 113, 113, 0.24);
   color: #fecaca;
 }
+.terminal-card {
+  min-height: 420px;
+}
+.terminal-form {
+  margin-bottom: 14px;
+}
+.terminal-form input {
+  flex: 1 1 480px;
+}
+.terminal-output {
+  margin: 0;
+  padding: 16px;
+  min-height: 320px;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(2, 6, 23, 0.92);
+  color: #d8f3ff;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
 .login-shell {
   min-height: calc(100vh - 96px);
   display: grid;

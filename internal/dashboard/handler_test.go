@@ -150,8 +150,11 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 		if !strings.Contains(body, "https://hello1.example.test") {
 			t.Fatalf("vm detail body missing public URL: %s", body)
 		}
-		if !strings.Contains(body, "ssh ussycode@10.0.0.2") {
+		if !strings.Contains(body, "ssh -p 2222 hello1@ssh.example.test") {
 			t.Fatalf("vm detail body missing ssh target: %s", body)
+		}
+		if !strings.Contains(body, "Open terminal") {
+			t.Fatalf("vm detail body missing browser terminal action: %s", body)
 		}
 	})
 }

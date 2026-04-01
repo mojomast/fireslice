@@ -34,6 +34,7 @@
     {{if index .VM "public_url"}}<p><strong>Public URL:</strong> <a href="{{index .VM "public_url"}}">{{index .VM "public_url"}}</a></p>{{end}}
     <p><strong>SSH:</strong> {{if index .VM "ssh_target"}}<code>{{index .VM "ssh_target"}}</code>{{else}}<span class="muted">Not directly reachable from outside the host</span>{{end}}</p>
     <p class="muted">{{index .VM "ssh_hint"}}</p>
+    {{if index .VM "terminal_url"}}<p><strong>Browser terminal:</strong> <a class="button-link small" href="{{index .VM "terminal_url"}}">Open terminal</a></p>{{end}}
   </div>
 
   <div class="card">
@@ -42,6 +43,7 @@
     <ol>
       <li>Use the public URL if the slice is exposed and your app is listening on the exposed port.</li>
       <li>Use SSH if you need shell access and have added your SSH key to your account.</li>
+      <li>Use the browser terminal for quick shell access from inside the dashboard.</li>
       <li>Inside the slice, bind web apps to <code>0.0.0.0</code>, not <code>127.0.0.1</code>.</li>
       <li>If the public URL returns <code>502</code>, the guest service is not reachable on <code>{{index .VM "exposed_port"}}</code> yet.</li>
     </ol>
