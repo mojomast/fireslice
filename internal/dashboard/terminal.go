@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -81,7 +82,7 @@ func (h *Handler) runTerminalCommand(ctx context.Context, guestIP, input string)
 		return "", err
 	}
 	if !strings.HasPrefix(line, "OK") {
-		return "", fmt.Errorf(strings.TrimSpace(line))
+		return "", errors.New(strings.TrimSpace(line))
 	}
 	signer, err := sshgate.LoadSigner(guestKeyPath)
 	if err != nil {

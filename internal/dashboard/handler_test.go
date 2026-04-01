@@ -65,7 +65,7 @@ func TestUserDashboardSettingsAndAccountAccess(t *testing.T) {
 			CreatedAt:  db.SQLiteTime{Time: time.Now()},
 			UpdatedAt:  db.SQLiteTime{Time: time.Now()},
 		}}},
-		VMs:    &dashboardStubVMs{vms: map[int64]*db.VM{11: {ID: 11, UserID: 7, Name: "hello1", Status: "running", Image: "ubuntu:24.04", VCPU: 1, MemoryMB: 512, DiskGB: 5, IPAddress: sql.NullString{String: "10.0.0.2", Valid: true}, Subdomain: sql.NullString{String: "hello1", Valid: true}, ExposedPort: 8081, CreatedAt: db.SQLiteTime{Time: time.Now()}, UpdatedAt: db.SQLiteTime{Time: time.Now()}}}},
+		VMs:    &dashboardStubVMs{vms: map[int64]*db.VM{11: {ID: 11, UserID: 7, Name: "hello1", Status: "running", Image: "ubuntu:24.04", VCPU: 1, MemoryMB: 512, DiskGB: 5, IPAddress: sql.NullString{String: "10.0.0.2", Valid: true}, ExposeSubdomain: true, Subdomain: sql.NullString{String: "hello1", Valid: true}, ExposedPort: 8081, CreatedAt: db.SQLiteTime{Time: time.Now()}, UpdatedAt: db.SQLiteTime{Time: time.Now()}}}},
 		Images: dashboardStubImages{images: []fireslice.ImageCatalogEntry{{Name: "Ubuntu 24.04", Ref: "ubuntu:24.04", Description: "Default image"}}},
 	}, auth, map[string]string{"domain": "example.test"})
 	if err != nil {

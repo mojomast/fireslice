@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -117,7 +118,7 @@ func (s *Server) resolveVM(fingerprint, vmName string) (*sshgate.ResolveResponse
 	}
 	if resp.VMID == 0 {
 		if resp.Error != "" {
-			return nil, fmt.Errorf(resp.Error)
+			return nil, errors.New(resp.Error)
 		}
 		return nil, fmt.Errorf("vm lookup failed")
 	}
@@ -141,7 +142,7 @@ func (s *Server) bridgeToGuest(session gssh.Session, resolved *sshgate.ResolveRe
 	}
 	if !strings.HasPrefix(line, "OK") {
 		relayConn.Close()
-		return fmt.Errorf(strings.TrimSpace(line))
+		return errors.New(strings.TrimSpace(line))
 	}
 	clientKey, err := sshgate.LoadSigner(s.GuestKeyPath)
 	if err != nil {
