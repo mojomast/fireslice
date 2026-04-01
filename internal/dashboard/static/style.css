@@ -128,16 +128,15 @@ code {
 .terminal-card {
   min-height: 420px;
 }
-.terminal-form {
+.terminal-hint {
+  margin-top: 0;
   margin-bottom: 14px;
-}
-.terminal-form input {
-  flex: 1 1 480px;
 }
 .terminal-output {
   margin: 0;
   padding: 16px;
   min-height: 320px;
+  height: 60vh;
   overflow: auto;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.14);
@@ -145,6 +144,12 @@ code {
   color: #d8f3ff;
   font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
+  outline: none;
+  cursor: text;
+}
+.terminal-output:focus {
+  border-color: rgba(96, 165, 250, 0.55);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25);
 }
 .login-shell {
   min-height: calc(100vh - 96px);

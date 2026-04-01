@@ -30,6 +30,8 @@ This repo is intentionally smaller than the old `ussycode` surface. It does not 
 - user password updates
 - user SSH key management
 - VM CRUD and exposure management at the control-plane level
+- isolated SSH bastion access to running slices
+- browser-based interactive terminal access for running slices
 - split deployment artifacts for a Dockerized control plane plus host runtime dependencies
 
 ## What Is Still Incomplete
@@ -50,6 +52,8 @@ This repo is intentionally smaller than the old `ussycode` surface. It does not 
 - `internal/vm`: Firecracker runtime manager
 - `internal/gateway`: metadata service
 - `internal/proxy`: Caddy admin API route manager
+- `internal/sshgate`: host-side SSH control and relay sockets for slice access
+- `internal/sshbastion`: isolated bastion process for public SSH ingress
 
 ## API Summary
 
@@ -79,6 +83,11 @@ Admin sees all VMs; non-admin sees/manages only owned VMs:
 - `DELETE /api/admin/vms/:id`
 - `PATCH /api/admin/vms/:id/exposure`
 
+Dashboard-only slice access flows:
+
+- SSH through the isolated bastion at `ssh.<domain>` on the configured bastion port
+- browser terminal at `/vms/:id/terminal` backed by websocket-to-SSH PTY relay
+
 ## Dashboard Pages
 
 - `/login`
@@ -86,6 +95,7 @@ Admin sees all VMs; non-admin sees/manages only owned VMs:
 - `/users`
 - `/users/:id`
 - `/vms/new`
+- `/vms/:id/terminal`
 - `/settings`
 
 For non-admin users, `/users` redirects to their own account page.
@@ -101,6 +111,11 @@ FIRESLICE_DATA_DIR=/var/lib/fireslice
 FIRESLICE_DB_PATH=/var/lib/fireslice/fireslice.db
 FIRESLICE_CADDY_ADMIN=http://localhost:2019
 FIRESLICE_METADATA_ADDR=:8083
+FIRESLICE_BASTION_SSH_ADDR=:2222
+FIRESLICE_BASTION_HTTP_ADDR=127.0.0.1:9191
+FIRESLICE_SSH_CONTROL_SOCK=/var/lib/fireslice/ssh-control.sock
+FIRESLICE_SSH_RELAY_SOCK=/var/lib/fireslice/ssh-relay.sock
+FIRESLICE_GUEST_SSH_KEY=/var/lib/fireslice/guest_control_ed25519
 FIRESLICE_FIRECRACKER_BIN=/usr/local/bin/firecracker
 FIRESLICE_KERNEL=/var/lib/fireslice/vmlinux
 FIRESLICE_BRIDGE=ussy0
@@ -112,6 +127,8 @@ FIRESLICE_ADMIN_PASS_BCRYPT=<bcrypt-hash>
 ## Build And Test
 
 Use a modern Go toolchain. In the current deployment work, `/usr/local/go/bin/go` is the correct binary.
+
+If Docker bridge DNS is broken because the host uses Tailscale's `100.100.100.100` resolver, use `--network host` for containerized Go test runs.
 
 ```bash
 /usr/local/go/bin/go test ./internal/db ./internal/fireslice ./internal/httpapi ./internal/sessionauth ./internal/dashboard
@@ -125,8 +142,15 @@ The intended public control plane host is `slice.ussyco.de`.
 The recommended deployment model is split:
 
 - run the control plane from `deploy/docker/fireslice-control/`
+- run the isolated SSH bastion separately from the control plane
 - keep Firecracker, `/dev/kvm`, `/dev/net/tun`, bridge setup, nftables, image tooling, and persistent storage on the host
 - place a real host Caddy or equivalent reverse proxy in front of `127.0.0.1:9090`
+
+Current slice access model:
+
+- HTTPS apps use `https://<subdomain>.<domain>` when exposure is enabled
+- SSH uses the isolated bastion at `ssh.<domain>` and the configured bastion port
+- the browser terminal uses the same guest SSH plumbing and opens an interactive shell over websocket
 
 Do not claim VM exposure works unless all of these are true:
 

@@ -58,6 +58,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /users/{id}", protected)
 	mux.Handle("GET /vms/{id}", protected)
 	mux.Handle("GET /vms/{id}/terminal", protected)
+	mux.Handle("GET /vms/{id}/terminal/ws", protected)
 	mux.Handle("POST /vms/{id}/terminal/stream", protected)
 	mux.Handle("GET /vms/new", protected)
 	mux.Handle("GET /images", protected)
@@ -121,6 +122,8 @@ func (h *Handler) routeProtected(w http.ResponseWriter, r *http.Request) {
 		h.renderVMNew(w, r, principal, "")
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/terminal"):
 		h.renderTerminal(w, r, principal)
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/terminal/ws"):
+		h.handleTerminalWebSocket(w, r, principal)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/terminal/stream"):
 		h.handleTerminalStream(w, r, principal)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/vms/"):

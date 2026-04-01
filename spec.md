@@ -14,6 +14,8 @@ Current intended shape:
 - DB-backed users with passwords and roles
 - dashboard-based self-service for normal users
 - JSON API for admin and self-service account/VM operations
+- isolated SSH bastion for slice access
+- interactive browser terminal for running slices
 
 ## Current Working Areas
 
@@ -24,6 +26,8 @@ Current intended shape:
 - user password updates
 - user-scoped dashboard and API authorization
 - control-plane Docker deployment artifacts
+- bastion-backed SSH access to running slices
+- browser terminal backed by guest SSH PTY sessions
 
 ## Current Known Gaps
 

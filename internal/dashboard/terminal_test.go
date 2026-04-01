@@ -88,6 +88,35 @@ func TestRenderTerminalForbidsForeignVM(t *testing.T) {
 	}
 }
 
+func TestRenderTerminalShowsInteractiveShell(t *testing.T) {
+	h := newTerminalTestHandler(t, map[int64]*db.VM{11: {
+		ID:        11,
+		UserID:    7,
+		Name:      "hello1",
+		Status:    "running",
+		Image:     "ubuntu:24.04",
+		IPAddress: sql.NullString{String: "10.0.0.2", Valid: true},
+		CreatedAt: db.SQLiteTime{Time: time.Now()},
+		UpdatedAt: db.SQLiteTime{Time: time.Now()},
+	}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/vms/11/terminal", nil)
+
+	h.renderTerminal(rec, req, dashboardPrincipal{UserID: 7, Username: "bob", Role: "user"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Interactive shell session") {
+		t.Fatalf("body = %q, want interactive terminal copy", body)
+	}
+	if !strings.Contains(body, `terminal\/ws`) {
+		t.Fatalf("body = %q, want websocket terminal path", body)
+	}
+}
+
 func TestShellEscape(t *testing.T) {
 	got := shellEscape("echo 'hi'")
 	want := `'echo '"'"'hi'"'"''`

@@ -28,12 +28,14 @@ The intended deployment model is split:
 - wildcard DNS for `*.slice.ussyco.de` if VM exposure is desired
 - ports 80 and 443 open to the host reverse proxy
 - Caddy admin API reachable by `fireslice` if dynamic VM exposure is enabled
+- a public hostname for the SSH bastion such as `ssh.slice.ussyco.de` if user SSH access is desired
 
 ## Recommended Layout
 
 - control plane repo checkout: `/opt/fireslice`
 - deployment operator dir: `/opt/fireslice-deploy`
 - persistent data dir: `/var/lib/fireslice`
+- bastion state dir: `/var/lib/fireslice-bastion`
 - control plane listen addr: `127.0.0.1:9090` behind host Caddy
 
 ## Split Deployment Notes
@@ -60,6 +62,12 @@ FIRESLICE_DATA_DIR=/var/lib/fireslice
 FIRESLICE_DB_PATH=/var/lib/fireslice/fireslice.db
 FIRESLICE_CADDY_ADMIN=http://127.0.0.1:2019
 FIRESLICE_METADATA_ADDR=:8083
+FIRESLICE_BASTION_SSH_ADDR=:2222
+FIRESLICE_BASTION_HTTP_ADDR=127.0.0.1:9191
+FIRESLICE_SSH_CONTROL_SOCK=/var/lib/fireslice/ssh-control.sock
+FIRESLICE_SSH_RELAY_SOCK=/var/lib/fireslice/ssh-relay.sock
+FIRESLICE_GUEST_SSH_KEY=/var/lib/fireslice/guest_control_ed25519
+FIRESLICE_SSH_HOST_KEY=/var/lib/fireslice-bastion/ssh_host_ed25519_key
 FIRESLICE_FIRECRACKER_BIN=/usr/local/bin/firecracker
 FIRESLICE_KERNEL=/boot/vmlinux-fireslice
 FIRESLICE_BRIDGE=ussy0
@@ -79,6 +87,20 @@ Typical shape:
 - Caddy admin API is reachable at `127.0.0.1:2019`
 
 If Caddy is crashing during ACME issuance, the control plane may still work locally while public HTTPS remains broken.
+
+## Slice SSH And Terminal Access
+
+Running slices are accessed in three different ways:
+
+- public web traffic through `https://<subdomain>.<domain>` when exposure is enabled
+- SSH through the isolated bastion, typically `ssh -p 2222 <slice-name>@ssh.slice.ussyco.de`
+- browser terminal through the dashboard at `/vms/:id/terminal`
+
+Important constraints:
+
+- the bastion should stay isolated from the host and should only proxy to slice `:22`
+- the control plane needs access to the SSH control and relay sockets
+- the guest image does not need a packaged `sshd`; fireslice injects the guest SSH helper at runtime
 
 ## VM Exposure Requirements
 

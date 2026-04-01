@@ -13,47 +13,127 @@
     <div>
       <p class="eyebrow">Browser terminal</p>
       <h1>{{index .VM "name"}}</h1>
-      <p class="muted">Run shell commands inside this slice without leaving the dashboard.</p>
+      <p class="muted">Interactive shell session inside this slice over the isolated SSH relay.</p>
     </div>
   </section>
 
   <div class="card terminal-card">
-    <form id="terminal-form" class="terminal-form">
-      <input id="terminal-input" name="input" type="text" placeholder="Type a shell command, e.g. pwd or ls -la" autocomplete="off" required>
-      <button type="submit">Run</button>
-    </form>
-    <pre id="terminal-output" class="terminal-output">Connected to {{index .VM "name"}}.
-</pre>
+    <p class="muted terminal-hint">Click the terminal, then type normally. Use <code>Ctrl+C</code> to interrupt and <code>Ctrl+D</code> to exit.</p>
+    <div id="terminal-output" class="terminal-output" tabindex="0" aria-label="Slice terminal">Connecting to {{index .VM "name"}}...
+</div>
   </div>
 </main>
 <script>
-const form = document.getElementById('terminal-form')
-const input = document.getElementById('terminal-input')
+const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://'
+const socket = new WebSocket(wsProtocol + location.host + '{{index .VM "ws_path"}}')
 const output = document.getElementById('terminal-output')
-form.addEventListener('submit', async (event) => {
-  event.preventDefault()
-  const command = input.value.trim()
-  if (!command) return
-  output.textContent += `\n$ ${command}\n`
-  input.value = ''
-  const body = new URLSearchParams({ input: command })
-  const res = await fetch(location.pathname + '/stream', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  })
-  const text = await res.text()
-  if (!res.ok) {
-    output.textContent += `error: ${text}\n`
-    return
+let screen = ''
+
+function trimScreen() {
+  if (screen.length > 65536) {
+    screen = screen.slice(screen.length - 65536)
   }
-  try {
-    const json = JSON.parse(text)
-    output.textContent += (json.output || '') + '\n'
-  } catch {
-    output.textContent += text + '\n'
-  }
+}
+
+function renderScreen() {
+  trimScreen()
+  output.textContent = screen
   output.scrollTop = output.scrollHeight
+}
+
+function appendOutput(chunk) {
+  for (let i = 0; i < chunk.length; i += 1) {
+    const ch = chunk[i]
+    if (ch === '\r') {
+      const lastNewline = screen.lastIndexOf('\n')
+      screen = lastNewline >= 0 ? screen.slice(0, lastNewline + 1) : ''
+      continue
+    }
+    if (ch === '\b' || ch === '\u007f') {
+      screen = screen.slice(0, -1)
+      continue
+    }
+    if (ch === '\u001b') {
+      while (i + 1 < chunk.length && !/[A-Za-z]/.test(chunk[i + 1])) {
+        i += 1
+      }
+      if (i + 1 < chunk.length) {
+        i += 1
+      }
+      continue
+    }
+    if (ch >= ' ' || ch === '\n' || ch === '\t') {
+      screen += ch
+    }
+  }
+  renderScreen()
+}
+
+function send(message) {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(message))
+  }
+}
+
+function sendResize() {
+  const cols = Math.max(40, Math.floor(output.clientWidth / 8))
+  const rows = Math.max(12, Math.floor(output.clientHeight / 18))
+  send({ type: 'resize', cols, rows })
+}
+
+socket.addEventListener('open', () => {
+  screen = ''
+  renderScreen()
+  sendResize()
+  output.focus()
+})
+
+socket.addEventListener('message', (event) => {
+  const msg = JSON.parse(event.data)
+  if (msg.type === 'output') appendOutput(msg.data || '')
+  if (msg.type === 'error') appendOutput(`\n[error] ${msg.data || 'terminal session failed'}\n`)
+  if (msg.type === 'exit') appendOutput('\n[session closed]\n')
+})
+
+socket.addEventListener('close', () => {
+  appendOutput('\n[disconnected]\n')
+})
+
+window.addEventListener('resize', sendResize)
+output.addEventListener('click', () => output.focus())
+output.addEventListener('paste', (event) => {
+  event.preventDefault()
+  const text = event.clipboardData.getData('text')
+  if (text) send({ type: 'input', data: text })
+})
+output.addEventListener('keydown', (event) => {
+  if (event.metaKey) return
+  let data = ''
+  if (event.ctrlKey && event.key.length === 1) {
+    const code = event.key.toUpperCase().charCodeAt(0)
+    if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64)
+  } else if (event.key === 'Enter') {
+    data = '\r'
+  } else if (event.key === 'Backspace') {
+    data = '\u007f'
+  } else if (event.key === 'Tab') {
+    data = '\t'
+  } else if (event.key === 'Escape') {
+    data = '\u001b'
+  } else if (event.key === 'ArrowUp') {
+    data = '\u001b[A'
+  } else if (event.key === 'ArrowDown') {
+    data = '\u001b[B'
+  } else if (event.key === 'ArrowRight') {
+    data = '\u001b[C'
+  } else if (event.key === 'ArrowLeft') {
+    data = '\u001b[D'
+  } else if (!event.ctrlKey && !event.altKey && event.key.length === 1) {
+    data = event.key
+  }
+  if (!data) return
+  event.preventDefault()
+  send({ type: 'input', data })
 })
 </script>
 </body>

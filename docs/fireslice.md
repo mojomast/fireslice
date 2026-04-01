@@ -23,6 +23,7 @@
 5. Log into `/login` as the bootstrap admin.
 6. Create a user with a password and role.
 7. Add an SSH key and create a VM for that user.
+8. Confirm the user can reach the slice through the SSH bastion or dashboard terminal once it is running.
 
 ## Important Behavior
 
@@ -31,6 +32,8 @@
 - non-admin users can manage their own account, password, keys, and VMs in the dashboard
 - the operator/admin remains the only actor who can list all users and create/delete arbitrary users
 - SSH keys are resolved from the database on VM boot
+- SSH to slices is exposed through a separate isolated bastion, not by publishing guest port 22 directly
+- the dashboard browser terminal now opens an interactive shell over websocket plus the same guest SSH relay path
 - exposure only works for running VMs
 - hiding a VM removes its Caddy route but may keep the stored subdomain for reuse
 
@@ -50,3 +53,5 @@
 6. Confirm the user can access `/settings` and their own `/users/:id` page
 7. Update the user password and verify the new password works
 8. Create a VM and confirm it appears only in that user's view unless you are logged in as admin
+9. Add an SSH key, then verify the VM detail page shows the bastion SSH command and terminal link
+10. Open `/vms/:id/terminal` and confirm you get an interactive shell once the slice is running

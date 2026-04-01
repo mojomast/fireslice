@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/creack/pty/v2"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -97,9 +98,33 @@ func serveSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 	cmd.Env = append(os.Environ(), "HOME=/home/ussycode", "USER=ussycode", "LOGNAME=ussycode", "SHELL=/bin/sh")
 
 	started := false
+	termType := "dumb"
+	termSize := &pty.Winsize{Rows: 24, Cols: 80}
+	resizeCh := make(chan pty.Winsize, 8)
+	hasPTY := false
 	for req := range requests {
 		switch req.Type {
 		case "pty-req":
+			hasPTY = true
+			var ptyReq struct {
+				Term   string
+				Cols   uint32
+				Rows   uint32
+				Width  uint32
+				Height uint32
+				Modes  string
+			}
+			if err := gossh.Unmarshal(req.Payload, &ptyReq); err == nil {
+				if strings.TrimSpace(ptyReq.Term) != "" {
+					termType = ptyReq.Term
+				}
+				if ptyReq.Rows > 0 {
+					termSize.Rows = uint16(ptyReq.Rows)
+				}
+				if ptyReq.Cols > 0 {
+					termSize.Cols = uint16(ptyReq.Cols)
+				}
+			}
 			_ = req.Reply(true, nil)
 		case "shell":
 			if started {
@@ -107,7 +132,7 @@ func serveSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 				continue
 			}
 			_ = req.Reply(true, nil)
-			if err := runCommand(ch, cmd); err != nil {
+			if err := runSessionCommand(ch, cmd, hasPTY, termType, termSize, resizeCh); err != nil {
 				_, _ = io.WriteString(ch.Stderr(), err.Error()+"\n")
 			}
 			started = true
@@ -127,7 +152,7 @@ func serveSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 			cmd.Dir = "/home/ussycode"
 			cmd.Env = append(os.Environ(), "HOME=/home/ussycode", "USER=ussycode", "LOGNAME=ussycode", "SHELL=/bin/sh")
 			_ = req.Reply(true, nil)
-			if err := runCommand(ch, cmd); err != nil {
+			if err := runSessionCommand(ch, cmd, hasPTY, termType, termSize, resizeCh); err != nil {
 				_, _ = io.WriteString(ch.Stderr(), err.Error()+"\n")
 			}
 			started = true
@@ -135,6 +160,24 @@ func serveSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 		case "env":
 			_ = req.Reply(true, nil)
 		case "window-change":
+			var win struct {
+				Cols   uint32
+				Rows   uint32
+				Width  uint32
+				Height uint32
+			}
+			if err := gossh.Unmarshal(req.Payload, &win); err == nil {
+				if win.Rows > 0 {
+					termSize.Rows = uint16(win.Rows)
+				}
+				if win.Cols > 0 {
+					termSize.Cols = uint16(win.Cols)
+				}
+				select {
+				case resizeCh <- *termSize:
+				default:
+				}
+			}
 			_ = req.Reply(true, nil)
 		default:
 			_ = req.Reply(false, nil)
@@ -143,6 +186,13 @@ func serveSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 	if !started {
 		_, _ = ch.SendRequest("exit-status", false, gossh.Marshal(struct{ Status uint32 }{Status: 1}))
 	}
+}
+
+func runSessionCommand(ch gossh.Channel, cmd *exec.Cmd, hasPTY bool, termType string, termSize *pty.Winsize, resizeCh <-chan pty.Winsize) error {
+	if hasPTY {
+		return runPTYCommand(ch, cmd, termType, termSize, resizeCh)
+	}
+	return runCommand(ch, cmd)
 }
 
 func runCommand(ch gossh.Channel, cmd *exec.Cmd) error {
@@ -154,6 +204,45 @@ func runCommand(ch gossh.Channel, cmd *exec.Cmd) error {
 	}
 	status := uint32(0)
 	if err := cmd.Run(); err != nil {
+		status = 1
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			status = uint32(exitErr.ExitCode())
+		} else {
+			return err
+		}
+	}
+	_, _ = ch.SendRequest("exit-status", false, gossh.Marshal(struct{ Status uint32 }{Status: status}))
+	return nil
+}
+
+func runPTYCommand(ch gossh.Channel, cmd *exec.Cmd, termType string, termSize *pty.Winsize, resizeCh <-chan pty.Winsize) error {
+	if termType != "" {
+		cmd.Env = append(cmd.Env, "TERM="+termType)
+	}
+	if err := dropToUssycode(cmd); err != nil {
+		return fmt.Errorf("failed to prepare session: %w", err)
+	}
+	ptmx, err := pty.StartWithSize(cmd, termSize)
+	if err != nil {
+		return fmt.Errorf("start pty session: %w", err)
+	}
+	defer ptmx.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case size := <-resizeCh:
+				_ = pty.Setsize(ptmx, &size)
+			case <-done:
+				return
+			}
+		}
+	}()
+	go io.Copy(ptmx, ch)
+	go io.Copy(ch, ptmx)
+	status := uint32(0)
+	if err := cmd.Wait(); err != nil {
 		status = 1
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			status = uint32(exitErr.ExitCode())

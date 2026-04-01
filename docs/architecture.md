@@ -10,14 +10,24 @@ Internet
    +--> Host Caddy / HTTPS edge
            |
            +--> fireslice control plane (:9090)
-                   |
-                   +--> dashboard
-                   +--> /api/admin
-                   +--> session auth
-                   +--> SQLite
-                   +--> metadata service
-                   +--> Caddy admin API route manager
-                   +--> Firecracker VM manager
+                    |
+                    +--> dashboard
+                    +--> /api/admin
+                    +--> session auth
+                    +--> SQLite
+                    +--> metadata service
+                    +--> Caddy admin API route manager
+                    +--> ssh control socket
+                    +--> ssh relay socket
+                    +--> Firecracker VM manager
+
+Internet
+   |
+   +--> isolated SSH bastion (:2222 or configured port)
+           |
+           +--> ssh control socket
+           +--> ssh relay socket
+           +--> guest SSH on running slice
 ```
 
 ## Main Pieces
@@ -44,6 +54,11 @@ Current roles:
 
 - admin: can manage all users and VMs
 - user: can manage only owned account state and owned VMs
+
+The dashboard also exposes:
+
+- VM detail pages with public URL and SSH instructions
+- an interactive browser terminal page that bridges websocket input/output to a guest SSH PTY session
 
 ### API
 
@@ -78,6 +93,15 @@ The VM runtime depends on host reality:
 - guest image import and disk creation tooling
 
 The control plane can come up even when the runtime is not fully usable.
+
+### Slice SSH Path
+
+SSH access is intentionally split from the HTTPS control plane.
+
+- a dedicated bastion process accepts public SSH connections
+- bastion key auth resolves the caller to an owned VM through the control socket
+- bastion and dashboard terminal sessions connect to the guest through a restricted relay socket that only permits guest port `22`
+- the guest runs a small injected SSH helper rather than depending on a distro `sshd` package
 
 ### Public Routing
 
